@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>LINODE GLOBAL NETWORK MONITOR</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
@@ -28,6 +28,7 @@ body {
     overflow: hidden;
     height: 100vh;
     cursor: crosshair;
+    touch-action: none;
 }
 
 /* CRT scanline overlay */
@@ -512,29 +513,14 @@ async function initMap() {
 
     g = svg.append('g');
 
-    // Zoom behavior — filter to avoid trapping touch users
+    // Zoom behavior — D3 handles all zoom, browser zoom disabled via viewport meta
     zoom = d3.zoom()
         .scaleExtent([1, 12])
-        .filter((event) => {
-            // Always allow programmatic zooms
-            if (!event.sourceEvent) return true;
-            // Allow mouse wheel and drag
-            if (event.type === 'wheel' || event.type === 'mousedown') return true;
-            // Touch: allow if map is zoomed in, block at scale=1 so browser zoom works
-            if (event.sourceEvent?.touches) {
-                const currentTransform = d3.zoomTransform(svg.node());
-                if (currentTransform.k <= 1.05 && event.sourceEvent.touches.length >= 2) {
-                    return false; // let browser handle pinch-out at min zoom
-                }
-            }
-            return true;
-        })
         .on('zoom', (event) => {
             g.attr('transform', event.transform);
         });
     svg.call(zoom);
-    // Prevent double-tap zoom on touch (interferes with region click)
-    svg.on('dblclick.zoom', null);
+    svg.on('dblclick.zoom', null); // disable double-tap zoom (conflicts with region click)
 
     // Load world topology
     const world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
