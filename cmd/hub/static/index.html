@@ -86,6 +86,21 @@ body::before {
     stroke-linecap: round;
 }
 
+.client-marker {
+    fill: #ffffff;
+    filter: url(#glow);
+}
+.client-arc {
+    fill: none;
+    stroke-linecap: round;
+}
+.client-label {
+    font-size: 8px;
+    fill: #ffffff;
+    text-anchor: middle;
+    pointer-events: none;
+}
+
 .arc-label {
     font-size: 6px;
     fill: var(--green-mid);
@@ -389,7 +404,6 @@ select option { background: #001a00; }
         <h3>View</h3>
         <button class="mode-btn active" data-mode="map" onclick="setMode('map')">MAP — ALL ROUTES</button>
         <button class="mode-btn" data-mode="heatmap" onclick="setMode('heatmap')">HEATMAP MATRIX</button>
-        <button class="mode-btn" data-mode="client" onclick="setMode('client')">CLIENT LATENCY</button>
     </div>
     <div class="panel" id="filter-panel">
         <h3>Filter</h3>
@@ -412,7 +426,7 @@ select option { background: #001a00; }
     <div class="panel">
         <h3>Tools</h3>
         <button class="mode-btn" data-mode="az" onclick="setMode('az')">AZ PAIR SELECTOR</button>
-        <button class="mode-btn" data-mode="finder" onclick="setMode('finder')">REGION FINDER</button>
+        <button class="mode-btn" data-mode="locate" onclick="setMode('locate')">MY LOCATION</button>
     </div>
 </div>
 
@@ -550,6 +564,7 @@ async function initMap() {
     // Layer groups
     g.append('g').attr('id', 'arcs-layer');
     g.append('g').attr('id', 'arc-labels-layer');
+    g.append('g').attr('id', 'client-layer');
     g.append('g').attr('id', 'dots-layer');
     g.append('g').attr('id', 'labels-layer');
 
@@ -968,6 +983,11 @@ function setMode(mode) {
     document.getElementById('heatmap-overlay').style.display = 'none';
     document.getElementById('tool-panel').style.display = 'none';
 
+    // Clear client location overlay when leaving locate mode
+    if (mode !== 'locate') {
+        d3.select('#client-layer').selectAll('*').remove();
+    }
+
     switch (mode) {
         case 'map':
             selectedRegion = null;
@@ -977,14 +997,11 @@ function setMode(mode) {
         case 'heatmap':
             showHeatmap();
             break;
-        case 'client':
-            measureClientLatency();
-            break;
         case 'az':
             showAZSelector();
             break;
-        case 'finder':
-            showRegionFinder();
+        case 'locate':
+            showLocateTool();
             break;
     }
 }
@@ -1087,20 +1104,85 @@ function showHeatmap() {
 // ============================================================
 // Client latency measurement
 // ============================================================
-async function measureClientLatency() {
-    document.getElementById('detail').style.display = 'block';
-    document.getElementById('detail-title').textContent = 'CLIENT LATENCY TEST';
-    document.getElementById('detail-content').innerHTML = '<div style="color:var(--green-dim)">MEASURING 0/' + allRegions.length + '...</div>';
+// ============================================================
+// My Location — combined finder + client latency
+// ============================================================
+function showLocateTool() {
+    const panel = document.getElementById('tool-panel');
+    panel.style.display = 'block';
+    document.getElementById('tool-title').textContent = 'MY LOCATION';
+    document.getElementById('tool-content').innerHTML = `
+        <button class="mode-btn" onclick="locateFromBrowser()">USE MY LOCATION</button>
+        <div style="font-size:10px;color:var(--green-dim);margin:6px 0 4px;">OR ENTER COORDINATES</div>
+        <input type="text" id="locate-lat" placeholder="LATITUDE (e.g., 40.7128)">
+        <input type="text" id="locate-lon" placeholder="LONGITUDE (e.g., -74.0060)">
+        <button class="mode-btn" onclick="locateFromCoords()">LOCATE</button>
+        <div id="locate-results"></div>`;
+}
 
-    // Build per-region ping URLs: {short}.latency.connected-cloud.io:8080
-    const domain = window.location.hostname.replace(/^[^.]+\./, ''); // latency.connected-cloud.io -> connected-cloud.io...
-    // Derive base domain from hub hostname: latency.connected-cloud.io
-    const hubHost = window.location.hostname; // latency.connected-cloud.io
-    const baseDomain = hubHost; // short.latency.connected-cloud.io
+async function locateFromBrowser() {
+    document.getElementById('locate-results').innerHTML = '<div style="color:var(--green-dim)">DETECTING LOCATION...</div>';
+    try {
+        const pos = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+        });
+        document.getElementById('locate-lat').value = pos.coords.latitude.toFixed(4);
+        document.getElementById('locate-lon').value = pos.coords.longitude.toFixed(4);
+        runLocate(pos.coords.latitude, pos.coords.longitude);
+    } catch (e) {
+        document.getElementById('locate-results').innerHTML = '<div style="color:var(--red)">GEOLOCATION DENIED — ENTER COORDINATES MANUALLY</div>';
+    }
+}
 
+function locateFromCoords() {
+    const lat = parseFloat(document.getElementById('locate-lat').value);
+    const lon = parseFloat(document.getElementById('locate-lon').value);
+    if (isNaN(lat) || isNaN(lon)) return;
+    runLocate(lat, lon);
+}
+
+async function runLocate(lat, lon) {
+    const regionMap = {};
+    allRegions.forEach(r => regionMap[r.id] = r);
+
+    // Place client marker on map
+    const clientLayer = d3.select('#client-layer');
+    clientLayer.selectAll('*').remove();
+
+    const pt = projection([lon, lat]);
+    // Pulsing marker for "YOU"
+    clientLayer.append('circle')
+        .attr('class', 'client-marker')
+        .attr('cx', pt[0]).attr('cy', pt[1]).attr('r', 5);
+    clientLayer.append('text')
+        .attr('class', 'client-label')
+        .attr('x', pt[0]).attr('y', pt[1] - 10)
+        .text('YOU');
+
+    // Zoom to client location
+    svg.transition().duration(750).call(
+        zoom.transform,
+        d3.zoomIdentity.translate(window.innerWidth / 2, window.innerHeight / 2).scale(3).translate(-pt[0], -pt[1])
+    );
+
+    // Fetch nearest regions by distance
+    document.getElementById('locate-results').innerHTML = '<div style="color:var(--green-dim)">FINDING NEAREST REGIONS...</div>';
+    let nearest = [];
+    try {
+        const resp = await fetch(`/api/v1/nearest?lat=${lat}&lon=${lon}`);
+        const data = await resp.json();
+        nearest = data.nearest || [];
+    } catch (e) { /* continue with latency only */ }
+
+    // Show distance results immediately
+    const distMap = {};
+    nearest.forEach(r => distMap[r.id] = r.distance_km);
+
+    // Start latency measurement in parallel
+    document.getElementById('locate-results').innerHTML = '<div style="color:var(--green-dim)">MEASURING LATENCY TO ALL REGIONS...</div>';
+
+    const baseDomain = window.location.hostname;
     let done = 0;
-
-    // Measure all regions in parallel
     const promises = allRegions.map(async (region) => {
         const url = `https://${region.short}.${baseDomain}/ping`;
         try {
@@ -1113,12 +1195,7 @@ async function measureClientLatency() {
             }
             samples.sort((a, b) => a - b);
             done++;
-            document.getElementById('detail-content').innerHTML =
-                `<div style="color:var(--green-dim)">MEASURING ${done}/${allRegions.length}...</div>`;
-            return {
-                source: 'client', target: region.id,
-                rtt_ms: Math.round(samples[1] * 10) / 10
-            };
+            return { target: region.id, rtt_ms: Math.round(samples[1] * 10) / 10 };
         } catch (e) {
             done++;
             return null;
@@ -1126,24 +1203,43 @@ async function measureClientLatency() {
     });
 
     const settled = await Promise.allSettled(promises);
-    const results = settled
+    const latResults = settled
         .filter(r => r.status === 'fulfilled' && r.value)
         .map(r => r.value);
-    results.sort((a, b) => a.rtt_ms - b.rtt_ms);
+    latResults.sort((a, b) => a.rtt_ms - b.rtt_ms);
 
-    const regionMap = {};
-    allRegions.forEach(r => regionMap[r.id] = r);
-
-    let html = '';
-    results.forEach(r => {
+    // Draw arcs from client to each region
+    clientLayer.selectAll('.client-arc').remove();
+    latResults.forEach(r => {
         const tgt = regionMap[r.target];
         if (!tgt) return;
+        const t = projection([tgt.lon, tgt.lat]);
+        const dx = t[0] - pt[0], dy = t[1] - pt[1];
+        const dr = Math.sqrt(dx * dx + dy * dy) * 1.5;
+        clientLayer.append('path')
+            .attr('class', 'client-arc')
+            .attr('d', `M${pt[0]},${pt[1]}A${dr},${dr} 0 0,1 ${t[0]},${t[1]}`)
+            .attr('stroke', rttColor(r.rtt_ms))
+            .attr('stroke-opacity', rttOpacity(r.rtt_ms) * 2)
+            .attr('stroke-width', 0.8);
+    });
+
+    // Build combined results table
+    let html = '';
+    latResults.forEach((r, i) => {
+        const tgt = regionMap[r.target];
+        if (!tgt) return;
+        const dist = distMap[r.target];
+        const distStr = dist ? `${Math.round(dist)}KM` : '--';
         html += `<div class="latency-row">
-            <span class="target">${tgt.label.toUpperCase()}</span>
+            <span class="target">${tgt.short.toUpperCase()} ${tgt.label.toUpperCase()}</span>
+            <span style="color:var(--green-dim);margin:0 6px">${distStr}</span>
             <span class="rtt ${rttClass(r.rtt_ms)}">${r.rtt_ms.toFixed(1)}MS</span>
         </div>`;
     });
-    document.getElementById('detail-content').innerHTML = html;
+
+    if (!html) html = '<div style="color:var(--green-dim)">NO REGIONS REACHABLE</div>';
+    document.getElementById('locate-results').innerHTML = html;
 }
 
 // ============================================================
@@ -1205,60 +1301,6 @@ async function loadAZPairs() {
 // ============================================================
 // Region Finder
 // ============================================================
-function showRegionFinder() {
-    const panel = document.getElementById('tool-panel');
-    panel.style.display = 'block';
-    document.getElementById('tool-title').textContent = 'REGION FINDER';
-    document.getElementById('tool-content').innerHTML = `
-        <div style="font-size:10px;color:var(--green-dim);margin-bottom:6px;">ENTER COORDINATES</div>
-        <input type="text" id="finder-lat" placeholder="LATITUDE (e.g., 40.7128)">
-        <input type="text" id="finder-lon" placeholder="LONGITUDE (e.g., -74.0060)">
-        <button class="mode-btn" onclick="findNearest()">FIND NEAREST REGIONS</button>
-        <button class="mode-btn" onclick="findFromBrowser()">USE MY LOCATION</button>
-        <div id="finder-results"></div>`;
-}
-
-async function findNearest() {
-    const lat = document.getElementById('finder-lat').value;
-    const lon = document.getElementById('finder-lon').value;
-    if (!lat || !lon) return;
-    try {
-        const resp = await fetch(`/api/v1/nearest?lat=${lat}&lon=${lon}`);
-        const data = await resp.json();
-        const nearest = data.nearest || [];
-        let html = '';
-        nearest.forEach((r, i) => {
-            const css = i === 0 ? 'az-sync' : i < 3 ? 'az-async' : 'az-dr';
-            html += `<div class="az-result ${css}">
-                <b>${i + 1}. ${r.label.toUpperCase()}</b> (${r.id})<br>
-                DISTANCE: ${Math.round(r.distance_km)}KM
-            </div>`;
-        });
-        document.getElementById('finder-results').innerHTML = html;
-
-        // Zoom to location
-        const pt = projection([parseFloat(lon), parseFloat(lat)]);
-        svg.transition().duration(750).call(
-            zoom.transform,
-            d3.zoomIdentity.translate(window.innerWidth / 2, window.innerHeight / 2).scale(4).translate(-pt[0], -pt[1])
-        );
-    } catch (e) {
-        document.getElementById('finder-results').innerHTML = '<div style="color:var(--red)">QUERY FAILED</div>';
-    }
-}
-
-async function findFromBrowser() {
-    try {
-        const pos = await new Promise((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
-        });
-        document.getElementById('finder-lat').value = pos.coords.latitude.toFixed(4);
-        document.getElementById('finder-lon').value = pos.coords.longitude.toFixed(4);
-        findNearest();
-    } catch (e) {
-        document.getElementById('finder-results').innerHTML = '<div style="color:var(--red)">GEOLOCATION DENIED</div>';
-    }
-}
 
 // ============================================================
 // WebSocket
