@@ -286,6 +286,58 @@ select option { background: #001a00; }
     vertical-align: middle;
 }
 
+/* Region picker */
+.continent-group { margin-bottom: 4px; }
+.continent-toggle {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--green-mid);
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-align: left;
+    padding: 4px 0;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(0,255,65,0.08);
+}
+.continent-toggle:hover { color: var(--green); }
+.continent-toggle::before { content: '▸ '; }
+.continent-toggle.open::before { content: '▾ '; }
+.continent-regions { display: none; padding-left: 4px; }
+.continent-regions.open { display: block; }
+.region-cb-row {
+    display: flex;
+    align-items: center;
+    padding: 1px 0;
+    font-size: 11px;
+    cursor: pointer;
+}
+.region-cb-row:hover { color: var(--green); }
+.region-cb-row input {
+    accent-color: var(--green);
+    margin-right: 6px;
+    cursor: pointer;
+}
+.region-cb-row label { cursor: pointer; }
+.picker-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+.picker-actions button {
+    flex: 1;
+    padding: 3px 0;
+    background: none;
+    border: 1px solid var(--green-dark);
+    color: var(--green-dim);
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+}
+.picker-actions button:hover { border-color: var(--green-mid); color: var(--green-mid); }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -314,11 +366,11 @@ select option { background: #001a00; }
         <button class="mode-btn" data-mode="heatmap" onclick="setMode('heatmap')">HEATMAP MATRIX</button>
         <button class="mode-btn" data-mode="client" onclick="setMode('client')">CLIENT LATENCY</button>
     </div>
-    <div class="panel">
+    <div class="panel" id="filter-panel">
         <h3>Filter</h3>
         <select id="filter-select" onchange="applyFilter()">
             <option value="all">ALL ROUTES</option>
-            <option value="unique" selected>UNIQUE REGIONS ONLY</option>
+            <option value="custom" selected>SELECT REGIONS</option>
             <optgroup label="CONTINENT">
                 <option value="continent:na">NORTH AMERICA</option>
                 <option value="continent:sa">SOUTH AMERICA</option>
@@ -330,6 +382,7 @@ select option { background: #001a00; }
             <optgroup label="COUNTRY" id="filter-countries">
             </optgroup>
         </select>
+        <div id="region-picker" style="margin-top:6px;max-height:40vh;overflow-y:auto;"></div>
     </div>
     <div class="panel">
         <h3>Tools</h3>
@@ -371,7 +424,8 @@ let allRegions = [];
 let latencyResults = [];
 let selectedRegion = null;
 let currentMode = 'map';
-let currentFilter = 'unique'; // 'all', 'unique', 'continent:xx', 'country:xx'
+let currentFilter = 'custom'; // 'all', 'custom', 'continent:xx', 'country:xx'
+let selectedRegionIds = new Set(); // for custom picker
 let svg, g, projection, pathGen, zoom;
 
 // ============================================================
@@ -513,6 +567,7 @@ async function loadRegions() {
         }
     });
 
+    buildRegionPicker();
     drawDots();
 }
 
@@ -593,29 +648,106 @@ function drawDots() {
 // ============================================================
 function applyFilter() {
     currentFilter = document.getElementById('filter-select').value;
+    const picker = document.getElementById('region-picker');
+    picker.style.display = currentFilter === 'custom' ? 'block' : 'none';
+
+    // When switching to a preset, sync the checkboxes
+    if (currentFilter !== 'custom') {
+        const ids = getFilteredRegionIds();
+        selectedRegionIds = ids;
+        document.querySelectorAll('.region-cb').forEach(cb => {
+            cb.checked = ids.has(cb.value);
+        });
+    }
+    updateStats();
     drawDots();
     drawArcs();
 }
 
-function getFilteredRegionIds() {
-    const regionMap = {};
-    allRegions.forEach(r => regionMap[r.id] = r);
+function onRegionCheckChange() {
+    selectedRegionIds = new Set();
+    document.querySelectorAll('.region-cb:checked').forEach(cb => {
+        selectedRegionIds.add(cb.value);
+    });
+    // Switch dropdown to custom if user is toggling checkboxes
+    document.getElementById('filter-select').value = 'custom';
+    currentFilter = 'custom';
+    updateStats();
+    drawDots();
+    drawArcs();
+}
 
+function toggleContinent(btn) {
+    btn.classList.toggle('open');
+    const regions = btn.nextElementSibling;
+    regions.classList.toggle('open');
+}
+
+function pickerSelectAll() {
+    document.querySelectorAll('.region-cb').forEach(cb => cb.checked = true);
+    onRegionCheckChange();
+}
+
+function pickerSelectNone() {
+    document.querySelectorAll('.region-cb').forEach(cb => cb.checked = false);
+    onRegionCheckChange();
+}
+
+function pickerSelectContinent(cont) {
+    document.querySelectorAll('.region-cb').forEach(cb => {
+        const r = allRegions.find(reg => reg.id === cb.value);
+        if (r && r.continent === cont) cb.checked = true;
+    });
+    onRegionCheckChange();
+}
+
+function buildRegionPicker() {
+    const continentNames = {
+        na: 'NORTH AMERICA', sa: 'SOUTH AMERICA', eu: 'EUROPE',
+        ap: 'ASIA PACIFIC', oc: 'OCEANIA', af: 'AFRICA'
+    };
+    const continentOrder = ['na', 'sa', 'eu', 'ap', 'oc', 'af'];
+
+    // Group regions by continent
+    const groups = {};
+    allRegions.forEach(r => {
+        if (!groups[r.continent]) groups[r.continent] = [];
+        groups[r.continent].push(r);
+    });
+
+    // Default: select all
+    selectedRegionIds = new Set(allRegions.map(r => r.id));
+
+    let html = '<div class="picker-actions">' +
+        '<button onclick="pickerSelectAll()">ALL</button>' +
+        '<button onclick="pickerSelectNone()">NONE</button>' +
+        '</div>';
+
+    for (const cont of continentOrder) {
+        const regs = groups[cont];
+        if (!regs) continue;
+        html += `<div class="continent-group">`;
+        html += `<button class="continent-toggle open" onclick="toggleContinent(this)">${continentNames[cont]} (${regs.length})</button>`;
+        html += `<div class="continent-regions open">`;
+        for (const r of regs) {
+            html += `<div class="region-cb-row">` +
+                `<input type="checkbox" class="region-cb" value="${r.id}" id="cb-${r.id}" checked onchange="onRegionCheckChange()">` +
+                `<label for="cb-${r.id}">${r.short.toUpperCase()} — ${r.label}</label>` +
+                `</div>`;
+        }
+        html += `</div></div>`;
+    }
+
+    document.getElementById('region-picker').innerHTML = html;
+}
+
+function getFilteredRegionIds() {
     if (currentFilter === 'all') {
         return new Set(allRegions.map(r => r.id));
     }
 
-    if (currentFilter === 'unique') {
-        // Keep only one region per city (first occurrence)
-        const seenCities = new Set();
-        const ids = new Set();
-        for (const r of allRegions) {
-            if (!seenCities.has(r.city)) {
-                seenCities.add(r.city);
-                ids.add(r.id);
-            }
-        }
-        return ids;
+    if (currentFilter === 'custom') {
+        return selectedRegionIds;
     }
 
     if (currentFilter.startsWith('continent:')) {
