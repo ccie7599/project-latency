@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linode Global Latency Map</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #0a0e1a;
+            color: #e0e6ed;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #globe-container {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .panel {
+            position: absolute;
+            background: rgba(10, 14, 26, 0.92);
+            border: 1px solid rgba(0, 200, 150, 0.2);
+            border-radius: 8px;
+            padding: 16px;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+
+        .panel h2 {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #00c896;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        /* Top-left: title + stats */
+        #info-panel {
+            top: 20px;
+            left: 20px;
+            min-width: 280px;
+        }
+
+        #info-panel h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        #info-panel .subtitle {
+            font-size: 11px;
+            color: #6b7a8d;
+            margin-bottom: 16px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 12px;
+        }
+
+        .stat-label { color: #6b7a8d; }
+        .stat-value { color: #e0e6ed; font-weight: 600; }
+
+        /* Top-right: controls */
+        #controls-panel {
+            top: 20px;
+            right: 20px;
+            min-width: 260px;
+        }
+
+        .mode-btn {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            background: rgba(0, 200, 150, 0.08);
+            border: 1px solid rgba(0, 200, 150, 0.2);
+            border-radius: 4px;
+            color: #e0e6ed;
+            font-size: 12px;
+            font-family: inherit;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.2s;
+        }
+
+        .mode-btn:hover {
+            background: rgba(0, 200, 150, 0.15);
+            border-color: rgba(0, 200, 150, 0.4);
+        }
+
+        .mode-btn.active {
+            background: rgba(0, 200, 150, 0.2);
+            border-color: #00c896;
+            color: #00c896;
+        }
+
+        /* Bottom-left: selected region detail */
+        #detail-panel {
+            bottom: 20px;
+            left: 20px;
+            min-width: 320px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .latency-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+
+        .latency-bar {
+            height: 4px;
+            border-radius: 2px;
+            margin-left: 8px;
+            flex-shrink: 0;
+        }
+
+        .lat-green { background: #00c896; }
+        .lat-yellow { background: #f0c040; }
+        .lat-red { background: #f04040; }
+
+        /* Bottom-right: AZ pair / region finder */
+        #tool-panel {
+            bottom: 20px;
+            right: 20px;
+            min-width: 300px;
+            max-width: 380px;
+            display: none;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 6px 10px;
+            margin-bottom: 8px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(0,200,150,0.2);
+            border-radius: 4px;
+            color: #e0e6ed;
+            font-size: 12px;
+            font-family: inherit;
+        }
+
+        .az-result {
+            padding: 8px;
+            margin-top: 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .az-sync { background: rgba(0, 200, 150, 0.1); border-left: 3px solid #00c896; }
+        .az-async { background: rgba(240, 192, 64, 0.1); border-left: 3px solid #f0c040; }
+        .az-dr { background: rgba(240, 64, 64, 0.1); border-left: 3px solid #f04040; }
+
+        /* Heatmap overlay */
+        #heatmap-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10, 14, 26, 0.96);
+            border: 1px solid rgba(0, 200, 150, 0.2);
+            border-radius: 8px;
+            padding: 20px;
+            z-index: 20;
+            display: none;
+            overflow: auto;
+            max-width: 95vw;
+            max-height: 90vh;
+        }
+
+        #heatmap-panel canvas {
+            cursor: crosshair;
+        }
+
+        #heatmap-close {
+            position: absolute;
+            top: 8px;
+            right: 12px;
+            background: none;
+            border: none;
+            color: #6b7a8d;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        /* Client latency overlay */
+        #client-panel {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(10, 14, 26, 0.92);
+            border: 1px solid rgba(0, 200, 150, 0.3);
+            border-radius: 8px;
+            padding: 12px 20px;
+            z-index: 15;
+            display: none;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(0,200,150,0.3);
+            border-top-color: #00c896;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Legend */
+        #legend {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 16px;
+            font-size: 11px;
+            z-index: 10;
+            background: rgba(10,14,26,0.8);
+            padding: 6px 16px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body>
+
+<div id="globe-container"></div>
+
+<!-- Info panel (top-left) -->
+<div class="panel" id="info-panel">
+    <h1>Linode Latency Map</h1>
+    <div class="subtitle">Real-time inter-region latency via NATS</div>
+    <div class="stat-row">
+        <span class="stat-label">Regions</span>
+        <span class="stat-value" id="stat-regions">0</span>
+    </div>
+    <div class="stat-row">
+        <span class="stat-label">Pairs measured</span>
+        <span class="stat-value" id="stat-pairs">0</span>
+    </div>
+    <div class="stat-row">
+        <span class="stat-label">Avg latency</span>
+        <span class="stat-value" id="stat-avg">--</span>
+    </div>
+    <div class="stat-row">
+        <span class="stat-label">Last sweep</span>
+        <span class="stat-value" id="stat-sweep">--</span>
+    </div>
+</div>
+
+<!-- Controls panel (top-right) -->
+<div class="panel" id="controls-panel">
+    <h2>View</h2>
+    <button class="mode-btn active" data-mode="globe" onclick="setMode('globe')">Globe — All Arcs</button>
+    <button class="mode-btn" data-mode="heatmap" onclick="setMode('heatmap')">Heatmap Matrix</button>
+    <button class="mode-btn" data-mode="client" onclick="setMode('client')">Client Latency</button>
+    <h2 style="margin-top: 12px;">Tools</h2>
+    <button class="mode-btn" data-mode="az" onclick="setMode('az')">AZ Pair Selector</button>
+    <button class="mode-btn" data-mode="finder" onclick="setMode('finder')">Region Finder</button>
+</div>
+
+<!-- Detail panel (bottom-left) -->
+<div class="panel" id="detail-panel">
+    <h2 id="detail-title">Region Detail</h2>
+    <div id="detail-content"></div>
+</div>
+
+<!-- Tool panel (bottom-right) -->
+<div class="panel" id="tool-panel">
+    <h2 id="tool-title">Tool</h2>
+    <div id="tool-content"></div>
+</div>
+
+<!-- Heatmap overlay -->
+<div id="heatmap-panel">
+    <button id="heatmap-close" onclick="setMode('globe')">&times;</button>
+    <h2 style="font-size:13px; color:#00c896; margin-bottom:12px; letter-spacing:1.5px; text-transform:uppercase;">Latency Matrix (ms)</h2>
+    <canvas id="heatmap-canvas"></canvas>
+</div>
+
+<!-- Client latency banner -->
+<div id="client-panel">
+    <span class="spinner"></span>
+    Measuring client latency to <span id="client-count">0</span> regions...
+</div>
+
+<!-- Legend -->
+<div id="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#00c896"></div> &lt;50ms</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f0c040"></div> 50-150ms</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f04040"></div> &gt;150ms</div>
+</div>
+
+<script src="https://unpkg.com/globe.gl@2.31.0/dist/globe.gl.min.js"></script>
+<script>
+// ============================================================
+// State
+// ============================================================
+let allRegions = [];
+let latencyResults = [];
+let clientLatencies = [];
+let selectedRegion = null;
+let currentMode = 'globe';
+let globe = null;
+let ws = null;
+
+// ============================================================
+// Globe initialization
+// ============================================================
+function initGlobe() {
+    globe = Globe()
+        .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
+        .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
+        .backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
+        .atmosphereColor('#00c896')
+        .atmosphereAltitude(0.15)
+        .pointsData([])
+        .pointLat('lat')
+        .pointLng('lon')
+        .pointColor('color')
+        .pointAltitude(0.01)
+        .pointRadius('radius')
+        .pointLabel('label')
+        .onPointClick(onRegionClick)
+        .arcsData([])
+        .arcStartLat('startLat')
+        .arcStartLng('startLng')
+        .arcEndLat('endLat')
+        .arcEndLng('endLng')
+        .arcColor('color')
+        .arcAltitude('alt')
+        .arcStroke('stroke')
+        .arcDashLength(0.5)
+        .arcDashGap(0.2)
+        .arcDashAnimateTime(2000)
+        .arcLabel('label')
+        .width(window.innerWidth)
+        .height(window.innerHeight)
+        (document.getElementById('globe-container'));
+
+    // Auto-rotate
+    globe.controls().autoRotate = true;
+    globe.controls().autoRotateSpeed = 0.4;
+    globe.controls().enableDamping = true;
+
+    // Initial camera position
+    globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });
+}
+
+// ============================================================
+// Data loading
+// ============================================================
+async function loadRegions() {
+    try {
+        const resp = await fetch('/api/v1/regions');
+        allRegions = await resp.json();
+        document.getElementById('stat-regions').textContent = allRegions.length;
+        updateGlobePoints();
+    } catch (e) {
+        console.error('Failed to load regions:', e);
+    }
+}
+
+async function loadMatrix() {
+    try {
+        const resp = await fetch('/api/v1/matrix');
+        const data = await resp.json();
+        latencyResults = data.results || [];
+        document.getElementById('stat-pairs').textContent = latencyResults.length;
+        updateStats();
+        updateGlobeArcs();
+    } catch (e) {
+        console.error('Failed to load matrix:', e);
+    }
+}
+
+function updateStats() {
+    if (latencyResults.length === 0) return;
+    const sum = latencyResults.reduce((s, r) => s + r.rtt_ms, 0);
+    const avg = sum / latencyResults.length;
+    document.getElementById('stat-avg').textContent = avg.toFixed(1) + ' ms';
+
+    const newest = latencyResults.reduce((a, b) =>
+        new Date(a.timestamp) > new Date(b.timestamp) ? a : b
+    );
+    const ago = Math.round((Date.now() - new Date(newest.timestamp).getTime()) / 1000);
+    document.getElementById('stat-sweep').textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago/60)}m ago`;
+}
+
+// ============================================================
+// Globe rendering
+// ============================================================
+function latencyColor(ms) {
+    if (ms < 50) return '#00c896';
+    if (ms < 150) return '#f0c040';
+    return '#f04040';
+}
+
+function latencyColorRGBA(ms, alpha) {
+    if (ms < 50) return `rgba(0, 200, 150, ${alpha})`;
+    if (ms < 150) return `rgba(240, 192, 64, ${alpha})`;
+    return `rgba(240, 64, 64, ${alpha})`;
+}
+
+function updateGlobePoints() {
+    const points = allRegions.map(r => ({
+        lat: r.lat,
+        lon: r.lon,
+        color: selectedRegion === r.id ? '#ffffff' : '#00c896',
+        radius: selectedRegion === r.id ? 0.5 : 0.3,
+        label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid rgba(0,200,150,0.3);font-size:12px;font-family:monospace;">
+            <b>${r.label}</b><br/>
+            <span style="color:#6b7a8d">${r.id}</span>
+        </div>`,
+        id: r.id
+    }));
+    globe.pointsData(points);
+}
+
+function updateGlobeArcs() {
+    if (currentMode !== 'globe' && currentMode !== 'client') return;
+
+    const regionMap = {};
+    allRegions.forEach(r => regionMap[r.id] = r);
+
+    let dataToShow = latencyResults;
+    if (currentMode === 'client') {
+        dataToShow = clientLatencies;
+    }
+
+    // If a region is selected, only show arcs from that region
+    if (selectedRegion && currentMode === 'globe') {
+        dataToShow = dataToShow.filter(r => r.source === selectedRegion || r.target === selectedRegion);
+    }
+
+    const arcs = dataToShow
+        .filter(r => regionMap[r.source] && regionMap[r.target])
+        .map(r => {
+            const src = regionMap[r.source];
+            const tgt = regionMap[r.target];
+            const ms = r.rtt_ms || r.p50_ms;
+            return {
+                startLat: src.lat,
+                startLng: src.lon,
+                endLat: tgt.lat,
+                endLng: tgt.lon,
+                color: [latencyColorRGBA(ms, 0.8), latencyColorRGBA(ms, 0.3)],
+                alt: Math.min(ms / 500, 0.4),
+                stroke: selectedRegion ? 1.0 : 0.4,
+                label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid rgba(0,200,150,0.3);font-size:12px;font-family:monospace;">
+                    <b>${src.label} ↔ ${tgt.label}</b><br/>
+                    RTT: <span style="color:${latencyColor(ms)}">${ms.toFixed(1)} ms</span>
+                </div>`
+            };
+        });
+
+    globe.arcsData(arcs);
+}
+
+// ============================================================
+// Region click handler
+// ============================================================
+function onRegionClick(point) {
+    if (selectedRegion === point.id) {
+        selectedRegion = null;
+        document.getElementById('detail-panel').style.display = 'none';
+    } else {
+        selectedRegion = point.id;
+        showRegionDetail(point.id);
+    }
+    updateGlobePoints();
+    updateGlobeArcs();
+}
+
+function showRegionDetail(regionId) {
+    const panel = document.getElementById('detail-panel');
+    const region = allRegions.find(r => r.id === regionId);
+    if (!region) return;
+
+    document.getElementById('detail-title').textContent = region.label;
+
+    const fromRegion = latencyResults.filter(r => r.source === regionId);
+    fromRegion.sort((a, b) => a.rtt_ms - b.rtt_ms);
+
+    const regionMap = {};
+    allRegions.forEach(r => regionMap[r.id] = r);
+
+    let html = '';
+    fromRegion.forEach(r => {
+        const tgt = regionMap[r.target];
+        if (!tgt) return;
+        const ms = r.rtt_ms;
+        const barWidth = Math.min(ms / 3, 100);
+        const colorClass = ms < 50 ? 'lat-green' : ms < 150 ? 'lat-yellow' : 'lat-red';
+        html += `<div class="latency-row">
+            <span>${tgt.label}</span>
+            <span style="display:flex;align-items:center;">
+                <span style="color:${latencyColor(ms)}">${ms.toFixed(1)} ms</span>
+                <div class="latency-bar ${colorClass}" style="width:${barWidth}px"></div>
+            </span>
+        </div>`;
+    });
+
+    if (html === '') {
+        html = '<div style="color:#6b7a8d;font-size:12px;">No measurements yet. Waiting for next sweep...</div>';
+    }
+
+    document.getElementById('detail-content').innerHTML = html;
+    panel.style.display = 'block';
+}
+
+// ============================================================
+// Mode switching
+// ============================================================
+function setMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === mode);
+    });
+
+    // Hide all overlays
+    document.getElementById('heatmap-panel').style.display = 'none';
+    document.getElementById('client-panel').style.display = 'none';
+    document.getElementById('tool-panel').style.display = 'none';
+
+    switch (mode) {
+        case 'globe':
+            selectedRegion = null;
+            document.getElementById('detail-panel').style.display = 'none';
+            updateGlobePoints();
+            updateGlobeArcs();
+            break;
+        case 'heatmap':
+            showHeatmap();
+            break;
+        case 'client':
+            measureClientLatency();
+            break;
+        case 'az':
+            showAZSelector();
+            break;
+        case 'finder':
+            showRegionFinder();
+            break;
+    }
+}
+
+// ============================================================
+// Heatmap
+// ============================================================
+function showHeatmap() {
+    const panel = document.getElementById('heatmap-panel');
+    panel.style.display = 'block';
+
+    const canvas = document.getElementById('heatmap-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Get unique regions that have data
+    const regionSet = new Set();
+    latencyResults.forEach(r => {
+        regionSet.add(r.source);
+        regionSet.add(r.target);
+    });
+    const regionIds = Array.from(regionSet).sort();
+    const n = regionIds.length;
+
+    if (n === 0) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#6b7a8d';
+        ctx.fillText('No data yet', 20, 30);
+        return;
+    }
+
+    const cellSize = Math.max(12, Math.min(18, Math.floor(700 / n)));
+    const labelWidth = 80;
+    const labelHeight = 80;
+
+    canvas.width = labelWidth + n * cellSize;
+    canvas.height = labelHeight + n * cellSize;
+
+    // Build lookup
+    const lookup = {};
+    latencyResults.forEach(r => {
+        lookup[r.source + ':' + r.target] = r.rtt_ms;
+    });
+
+    // Draw labels
+    ctx.fillStyle = '#6b7a8d';
+    ctx.font = `${Math.min(10, cellSize - 2)}px monospace`;
+    ctx.textAlign = 'right';
+    regionIds.forEach((id, i) => {
+        const short = allRegions.find(r => r.id === id)?.short || id.slice(0, 6);
+        ctx.fillText(short, labelWidth - 4, labelHeight + i * cellSize + cellSize / 2 + 3);
+    });
+
+    ctx.save();
+    ctx.textAlign = 'left';
+    regionIds.forEach((id, i) => {
+        const short = allRegions.find(r => r.id === id)?.short || id.slice(0, 6);
+        ctx.save();
+        ctx.translate(labelWidth + i * cellSize + cellSize / 2, labelHeight - 4);
+        ctx.rotate(-Math.PI / 4);
+        ctx.fillStyle = '#6b7a8d';
+        ctx.fillText(short, 0, 0);
+        ctx.restore();
+    });
+    ctx.restore();
+
+    // Draw cells
+    regionIds.forEach((src, i) => {
+        regionIds.forEach((tgt, j) => {
+            const x = labelWidth + j * cellSize;
+            const y = labelHeight + i * cellSize;
+
+            if (src === tgt) {
+                ctx.fillStyle = '#1a1e2e';
+                ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+                return;
+            }
+
+            const ms = lookup[src + ':' + tgt];
+            if (ms === undefined) {
+                ctx.fillStyle = '#1a1e2e';
+            } else if (ms < 50) {
+                const t = ms / 50;
+                ctx.fillStyle = `rgba(0, ${Math.round(200 - t * 50)}, ${Math.round(150 - t * 50)}, 0.8)`;
+            } else if (ms < 150) {
+                const t = (ms - 50) / 100;
+                ctx.fillStyle = `rgba(${Math.round(240)}, ${Math.round(192 - t * 128)}, ${Math.round(64 - t * 24)}, 0.8)`;
+            } else {
+                ctx.fillStyle = 'rgba(240, 64, 64, 0.8)';
+            }
+            ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+        });
+    });
+
+    // Hover tooltip
+    canvas.onmousemove = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const col = Math.floor((mx - labelWidth) / cellSize);
+        const row = Math.floor((my - labelHeight) / cellSize);
+        if (col >= 0 && col < n && row >= 0 && row < n) {
+            const src = regionIds[row];
+            const tgt = regionIds[col];
+            const ms = lookup[src + ':' + tgt];
+            canvas.title = ms !== undefined ? `${src} → ${tgt}: ${ms.toFixed(1)} ms` : `${src} → ${tgt}: no data`;
+        }
+    };
+}
+
+// ============================================================
+// Client latency measurement
+// ============================================================
+async function measureClientLatency() {
+    const panel = document.getElementById('client-panel');
+    panel.style.display = 'block';
+    document.getElementById('client-count').textContent = allRegions.length;
+
+    clientLatencies = [];
+
+    // We measure against all agent ping endpoints
+    // In production, these would be probe-{short}.latency.connected-cloud.io
+    // For local dev, we use the hub's /ping endpoint as demo
+    const hubOrigin = window.location.origin;
+
+    // Measure to each region's ping endpoint
+    const promises = allRegions.map(async (region) => {
+        const url = `${hubOrigin}/ping`; // In production: https://probe-${region.short}.latency.connected-cloud.io/ping
+        try {
+            // Warmup request
+            await fetch(url, { cache: 'no-store' });
+
+            // Measure 3 samples
+            const samples = [];
+            for (let i = 0; i < 3; i++) {
+                const start = performance.now();
+                await fetch(url, { cache: 'no-store' });
+                samples.push(performance.now() - start);
+            }
+            samples.sort((a, b) => a - b);
+            const median = samples[Math.floor(samples.length / 2)];
+
+            return {
+                source: 'client',
+                target: region.id,
+                rtt_ms: Math.round(median * 10) / 10,
+                p50_ms: Math.round(median * 10) / 10,
+                timestamp: new Date().toISOString()
+            };
+        } catch (e) {
+            return null;
+        }
+    });
+
+    const results = await Promise.allSettled(promises);
+    clientLatencies = results
+        .filter(r => r.status === 'fulfilled' && r.value)
+        .map(r => r.value);
+
+    panel.style.display = 'none';
+
+    // Add client point to globe
+    if (clientLatencies.length > 0) {
+        // Try to get client location via browser geolocation API
+        try {
+            const pos = await new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+            });
+            const clientPoint = {
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+                color: '#ffffff',
+                radius: 0.6,
+                label: '<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid #fff;font-size:12px;font-family:monospace;"><b>You</b></div>',
+                id: 'client'
+            };
+            const points = allRegions.map(r => ({
+                lat: r.lat,
+                lon: r.lon,
+                color: '#00c896',
+                radius: 0.3,
+                label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${r.label}</b></div>`,
+                id: r.id
+            }));
+            points.push(clientPoint);
+            globe.pointsData(points);
+
+            // Update client arcs to use client position
+            const regionMap = {};
+            allRegions.forEach(r => regionMap[r.id] = r);
+            const arcs = clientLatencies.map(r => {
+                const tgt = regionMap[r.target];
+                if (!tgt) return null;
+                return {
+                    startLat: pos.coords.latitude,
+                    startLng: pos.coords.longitude,
+                    endLat: tgt.lat,
+                    endLng: tgt.lon,
+                    color: [latencyColorRGBA(r.rtt_ms, 0.8), latencyColorRGBA(r.rtt_ms, 0.3)],
+                    alt: Math.min(r.rtt_ms / 500, 0.4),
+                    stroke: 0.8,
+                    label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>You → ${tgt.label}</b><br/>RTT: <span style="color:${latencyColor(r.rtt_ms)}">${r.rtt_ms.toFixed(1)} ms</span></div>`
+                };
+            }).filter(Boolean);
+            globe.arcsData(arcs);
+        } catch (e) {
+            // Geolocation denied, still show results in detail panel
+            updateGlobeArcs();
+        }
+
+        // Show results in detail panel
+        showClientResults();
+    }
+}
+
+function showClientResults() {
+    const panel = document.getElementById('detail-panel');
+    document.getElementById('detail-title').textContent = 'Client Latency';
+
+    const regionMap = {};
+    allRegions.forEach(r => regionMap[r.id] = r);
+
+    clientLatencies.sort((a, b) => a.rtt_ms - b.rtt_ms);
+
+    let html = '';
+    clientLatencies.forEach(r => {
+        const tgt = regionMap[r.target];
+        if (!tgt) return;
+        const ms = r.rtt_ms;
+        const barWidth = Math.min(ms / 3, 100);
+        const colorClass = ms < 50 ? 'lat-green' : ms < 150 ? 'lat-yellow' : 'lat-red';
+        html += `<div class="latency-row">
+            <span>${tgt.label}</span>
+            <span style="display:flex;align-items:center;">
+                <span style="color:${latencyColor(ms)}">${ms.toFixed(1)} ms</span>
+                <div class="latency-bar ${colorClass}" style="width:${barWidth}px"></div>
+            </span>
+        </div>`;
+    });
+
+    document.getElementById('detail-content').innerHTML = html;
+    panel.style.display = 'block';
+}
+
+// ============================================================
+// AZ Pair Selector
+// ============================================================
+function showAZSelector() {
+    const panel = document.getElementById('tool-panel');
+    panel.style.display = 'block';
+    document.getElementById('tool-title').textContent = 'AZ Pair Selector';
+
+    let html = `
+        <select id="az-primary" onchange="loadAZPairs()">
+            <option value="">Select primary region...</option>
+            ${allRegions.map(r => `<option value="${r.id}">${r.label} (${r.id})</option>`).join('')}
+        </select>
+        <div id="az-results"></div>
+    `;
+    document.getElementById('tool-content').innerHTML = html;
+}
+
+async function loadAZPairs() {
+    const primary = document.getElementById('az-primary').value;
+    if (!primary) return;
+
+    selectedRegion = primary;
+    updateGlobePoints();
+
+    try {
+        const resp = await fetch(`/api/v1/az-pairs?primary=${primary}`);
+        const data = await resp.json();
+        const pairs = data.pairs || [];
+
+        const regionMap = {};
+        allRegions.forEach(r => regionMap[r.id] = r);
+
+        let html = '';
+        const categories = {
+            'sync-capable': { label: 'Sync Replication', css: 'az-sync' },
+            'async-low-rpo': { label: 'Async (Low RPO)', css: 'az-async' },
+            'dr-only': { label: 'DR Only', css: 'az-dr' }
+        };
+
+        for (const [cat, meta] of Object.entries(categories)) {
+            const catPairs = pairs.filter(p => p.category === cat).slice(0, 5);
+            if (catPairs.length === 0) continue;
+
+            html += `<div style="margin-top:10px;font-size:11px;color:#6b7a8d;text-transform:uppercase;letter-spacing:1px;">${meta.label}</div>`;
+            catPairs.forEach(p => {
+                const tgt = regionMap[p.secondary];
+                const coLocWarning = p.co_located ? '<br/><span style="color:#f0c040;">Same metro — limited fault isolation</span>' : '';
+                html += `<div class="az-result ${meta.css}">
+                    <b>${tgt ? tgt.label : p.secondary}</b><br/>
+                    RTT: ${p.rtt_ms.toFixed(1)} ms | Distance: ${Math.round(p.distance_km)} km${coLocWarning}<br/>
+                    <span style="color:#6b7a8d">${p.rationale}</span>
+                </div>`;
+            });
+        }
+
+        if (html === '') {
+            html = '<div style="color:#6b7a8d;margin-top:8px;">No latency data yet. Wait for measurements.</div>';
+        }
+
+        document.getElementById('az-results').innerHTML = html;
+
+        // Show arcs to AZ candidates on globe
+        const arcPairs = pairs.slice(0, 10);
+        const srcRegion = regionMap[primary];
+        if (srcRegion) {
+            const arcs = arcPairs.map(p => {
+                const tgt = regionMap[p.secondary];
+                if (!tgt) return null;
+                return {
+                    startLat: srcRegion.lat,
+                    startLng: srcRegion.lon,
+                    endLat: tgt.lat,
+                    endLng: tgt.lon,
+                    color: [latencyColorRGBA(p.rtt_ms, 0.9), latencyColorRGBA(p.rtt_ms, 0.3)],
+                    alt: 0.15,
+                    stroke: 1.2,
+                    label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${srcRegion.label} ↔ ${tgt.label}</b><br/>RTT: ${p.rtt_ms.toFixed(1)} ms | ${p.category}</div>`
+                };
+            }).filter(Boolean);
+            globe.arcsData(arcs);
+        }
+
+    } catch (e) {
+        document.getElementById('az-results').innerHTML = '<div style="color:#f04040;">Failed to load AZ pairs</div>';
+    }
+}
+
+// ============================================================
+// Region Finder
+// ============================================================
+function showRegionFinder() {
+    const panel = document.getElementById('tool-panel');
+    panel.style.display = 'block';
+    document.getElementById('tool-title').textContent = 'Region Finder';
+
+    let html = `
+        <div style="font-size:11px;color:#6b7a8d;margin-bottom:8px;">Enter coordinates or use browser location</div>
+        <input type="text" id="finder-lat" placeholder="Latitude (e.g., 40.7128)" />
+        <input type="text" id="finder-lon" placeholder="Longitude (e.g., -74.0060)" />
+        <button class="mode-btn" onclick="findNearest()">Find Nearest Regions</button>
+        <button class="mode-btn" onclick="findFromBrowser()">Use My Location</button>
+        <div id="finder-results"></div>
+    `;
+    document.getElementById('tool-content').innerHTML = html;
+}
+
+async function findNearest() {
+    const lat = document.getElementById('finder-lat').value;
+    const lon = document.getElementById('finder-lon').value;
+    if (!lat || !lon) return;
+
+    try {
+        const resp = await fetch(`/api/v1/nearest?lat=${lat}&lon=${lon}`);
+        const data = await resp.json();
+        showFinderResults(data, parseFloat(lat), parseFloat(lon));
+    } catch (e) {
+        document.getElementById('finder-results').innerHTML = '<div style="color:#f04040;">Failed to find regions</div>';
+    }
+}
+
+async function findFromBrowser() {
+    try {
+        const pos = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+        });
+        document.getElementById('finder-lat').value = pos.coords.latitude.toFixed(4);
+        document.getElementById('finder-lon').value = pos.coords.longitude.toFixed(4);
+        findNearest();
+    } catch (e) {
+        document.getElementById('finder-results').innerHTML = '<div style="color:#f04040;">Geolocation denied or unavailable</div>';
+    }
+}
+
+function showFinderResults(data, lat, lon) {
+    const nearest = data.nearest || [];
+    let html = '';
+    nearest.forEach((r, i) => {
+        const colorClass = i === 0 ? 'az-sync' : i < 3 ? 'az-async' : 'az-dr';
+        html += `<div class="az-result ${colorClass}">
+            <b>${i + 1}. ${r.label}</b> (${r.id})<br/>
+            Distance: ${Math.round(r.distance_km)} km
+        </div>`;
+    });
+    document.getElementById('finder-results').innerHTML = html;
+
+    // Show on globe
+    const points = allRegions.map(r => ({
+        lat: r.lat,
+        lon: r.lon,
+        color: nearest.slice(0, 3).some(n => n.id === r.id) ? '#00c896' : '#3a4a5d',
+        radius: nearest.slice(0, 3).some(n => n.id === r.id) ? 0.5 : 0.2,
+        label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${r.label}</b></div>`,
+        id: r.id
+    }));
+    // Add client point
+    points.push({
+        lat: lat,
+        lon: lon,
+        color: '#ffffff',
+        radius: 0.6,
+        label: '<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid #fff;font-size:12px;font-family:monospace;"><b>Query Location</b></div>',
+        id: 'query'
+    });
+    globe.pointsData(points);
+    globe.pointOfView({ lat: lat, lng: lon, altitude: 2.0 }, 1000);
+
+    // Draw arcs from query to nearest
+    const arcs = nearest.slice(0, 5).map(r => ({
+        startLat: lat,
+        startLng: lon,
+        endLat: r.lat,
+        endLng: r.lon,
+        color: ['rgba(255,255,255,0.8)', 'rgba(0,200,150,0.3)'],
+        alt: 0.1,
+        stroke: 1.0,
+        label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${r.label}</b><br/>Distance: ${Math.round(r.distance_km)} km</div>`
+    }));
+    globe.arcsData(arcs);
+}
+
+// ============================================================
+// WebSocket for live updates
+// ============================================================
+function connectWebSocket() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws/live`);
+
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'snapshot') {
+                latencyResults = msg.results || [];
+                updateStats();
+                updateGlobeArcs();
+            } else if (msg.source && msg.target) {
+                // Individual result update
+                const idx = latencyResults.findIndex(r => r.source === msg.source && r.target === msg.target);
+                if (idx >= 0) {
+                    latencyResults[idx] = msg;
+                } else {
+                    latencyResults.push(msg);
+                }
+                updateStats();
+                if (currentMode === 'globe') {
+                    updateGlobeArcs();
+                }
+            }
+        } catch (e) {
+            console.error('WS parse error:', e);
+        }
+    };
+
+    ws.onclose = () => {
+        setTimeout(connectWebSocket, 3000);
+    };
+
+    ws.onerror = () => {
+        ws.close();
+    };
+}
+
+// ============================================================
+// Startup
+// ============================================================
+window.addEventListener('resize', () => {
+    if (globe) {
+        globe.width(window.innerWidth);
+        globe.height(window.innerHeight);
+    }
+});
+
+initGlobe();
+loadRegions();
+loadMatrix();
+connectWebSocket();
+
+// Refresh matrix every 30 seconds
+setInterval(loadMatrix, 30000);
+</script>
+</body>
+</html>

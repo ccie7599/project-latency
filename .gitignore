@@ -1,0 +1,29 @@
+# Binaries
+/bin/
+/agent
+/hub
+*.exe
+
+# Go
+/vendor/
+
+# Frontend
+/web/node_modules/
+/web/dist/
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate*
+infra/terraform/*.tfvars
+infra/terraform/.terraform.lock.hcl
+
+# Secrets
+.env
+*.pem
+*.key
+GeoLite2-City.mmdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
