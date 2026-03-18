@@ -85,6 +85,13 @@ body::before {
     stroke-linecap: round;
 }
 
+.arc-label {
+    font-size: 6px;
+    fill: var(--green-mid);
+    text-anchor: middle;
+    pointer-events: none;
+}
+
 /* Header bar */
 #header {
     position: absolute;
@@ -520,6 +527,7 @@ async function initMap() {
 
     // Layer groups
     g.append('g').attr('id', 'arcs-layer');
+    g.append('g').attr('id', 'arc-labels-layer');
     g.append('g').attr('id', 'dots-layer');
     g.append('g').attr('id', 'labels-layer');
 
@@ -814,6 +822,41 @@ function drawArcs() {
         .attr('stroke-opacity', d => selectedRegion ? rttOpacity(d.rtt_ms) * 2 : rttOpacity(d.rtt_ms))
         .attr('stroke-width', d => selectedRegion ? 1.2 : 0.5);
 
+    // Arc labels — show when count is manageable
+    const showLabels = data.length <= 150;
+    const labelData = showLabels ? data.filter(r => regionMap[r.source] && regionMap[r.target]) : [];
+
+    const arcLabels = d3.select('#arc-labels-layer')
+        .selectAll('.arc-label')
+        .data(labelData, d => d.source + ':' + d.target);
+
+    arcLabels.exit().remove();
+
+    const labelEnter = arcLabels.enter()
+        .append('text')
+        .attr('class', 'arc-label');
+
+    arcLabels.merge(labelEnter)
+        .attr('x', d => {
+            const src = regionMap[d.source];
+            const tgt = regionMap[d.target];
+            const s = projection([src.lon, src.lat]);
+            const t = projection([tgt.lon, tgt.lat]);
+            return (s[0] + t[0]) / 2;
+        })
+        .attr('y', d => {
+            const src = regionMap[d.source];
+            const tgt = regionMap[d.target];
+            const s = projection([src.lon, src.lat]);
+            const t = projection([tgt.lon, tgt.lat]);
+            // Offset upward to sit on the arc curve
+            const mid = (s[1] + t[1]) / 2;
+            const dx = Math.abs(t[0] - s[0]);
+            return mid - dx * 0.08;
+        })
+        .attr('fill', d => rttColor(d.rtt_ms))
+        .text(d => Math.round(d.rtt_ms));
+
     // Update dot highlighting
     d3.selectAll('.region-dot')
         .classed('selected', d => d.id === selectedRegion)
@@ -926,7 +969,7 @@ function showHeatmap() {
     const n = regionIds.length;
     if (n === 0) return;
 
-    const cellSize = Math.max(10, Math.min(16, Math.floor(650 / n)));
+    const cellSize = Math.max(18, Math.min(28, Math.floor(900 / n)));
     const labelW = 70, labelH = 70;
     canvas.width = labelW + n * cellSize;
     canvas.height = labelH + n * cellSize;
@@ -976,6 +1019,16 @@ function showHeatmap() {
                 ctx.fillStyle = `rgba(255, 51, 51, ${0.3 + 0.3 * Math.min(1, (ms - 150) / 200)})`;
             }
             ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+
+            // Draw integer value in cell
+            if (ms !== undefined) {
+                const val = Math.round(ms);
+                const fontSize = Math.max(7, Math.min(10, cellSize - 8));
+                ctx.font = `${fontSize}px 'Share Tech Mono', monospace`;
+                ctx.textAlign = 'center';
+                ctx.fillStyle = ms < 80 ? '#000000' : '#ffffff';
+                ctx.fillText(val, x + (cellSize - 1) / 2, y + (cellSize - 1) / 2 + fontSize / 3);
+            }
         });
     });
 
