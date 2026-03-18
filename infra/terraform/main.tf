@@ -166,12 +166,22 @@ resource "linode_firewall" "hub" {
   label = "latency-hub-fw"
   tags  = local.common_tags
 
+  # HTTPS origin — Akamai OIPACL + admin + this server
   inbound {
-    label    = "https-ui"
+    label    = "https-origin"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "443"
-    ipv4     = [var.admin_ip, "172.234.206.146/32"]
+    ipv4     = [
+      "2.16.0.0/13",       # Akamai OIPACL
+      "23.0.0.0/12",       # Akamai OIPACL
+      "23.32.0.0/11",      # Akamai OIPACL
+      "23.192.0.0/11",     # Akamai OIPACL
+      "95.100.0.0/15",     # Akamai OIPACL
+      "184.24.0.0/13",     # Akamai OIPACL
+      var.admin_ip,         # direct admin access
+      "172.234.206.146/32", # this server
+    ]
   }
 
   inbound {

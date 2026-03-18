@@ -28,3 +28,6 @@ GeoLite2-City.mmdb
 .vscode/
 *.swp
 infra/terraform/tfplan
+infra/terraform/akamai/.terraform/
+infra/terraform/akamai/*.tfstate*
+infra/terraform/akamai/.terraform.lock.hcl
