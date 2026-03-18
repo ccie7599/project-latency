@@ -152,6 +152,14 @@ resource "linode_instance" "hub" {
 # ============================================================
 # Firewalls — one for hub, one shared across all agents
 # ============================================================
+locals {
+  # All cluster member IPs in CIDR notation — hub + every agent
+  cluster_ips = concat(
+    ["${linode_instance.hub.ip_address}/32"],
+    [for mod in module.agent : "${mod.ip_address}/32"]
+  )
+}
+
 resource "linode_firewall" "hub" {
   label = "latency-hub-fw"
   tags  = local.common_tags
@@ -169,8 +177,7 @@ resource "linode_firewall" "hub" {
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "6222"
-    ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
+    ipv4     = local.cluster_ips
   }
 
   inbound {
@@ -212,8 +219,7 @@ resource "linode_firewall" "agents" {
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "6222"
-    ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
+    ipv4     = local.cluster_ips
   }
 
   inbound {
