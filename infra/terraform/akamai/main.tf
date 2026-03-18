@@ -98,7 +98,9 @@ resource "akamai_datastream" "latency" {
 
   dataset_fields = [
     1000,  # CP code
+    1001,  # Request host
     1002,  # Request ID
+    1003,  # Request method
     1005,  # Bytes
     1006,  # Client IP
     1008,  # HTTP status code
