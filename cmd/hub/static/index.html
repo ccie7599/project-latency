@@ -205,9 +205,21 @@ body::before {
     bottom: 12px;
     right: 12px;
     width: 300px;
+    max-height: 60vh;
+    overflow-y: auto;
     z-index: 10;
     display: none;
 }
+#tool-close {
+    float: right;
+    background: none;
+    border: none;
+    color: var(--green-dim);
+    font-size: 16px;
+    cursor: pointer;
+    margin: -4px -4px 0 0;
+}
+#tool-close:hover { color: var(--green); }
 
 select, input[type="text"] {
     width: 100%;
@@ -332,6 +344,7 @@ select option { background: #001a00; }
 </div>
 
 <div class="panel" id="tool-panel">
+    <button id="tool-close" onclick="closeTool()">&times;</button>
     <h3 id="tool-title">TOOL</h3>
     <div id="tool-content"></div>
 </div>
@@ -725,6 +738,13 @@ function showRegionDetail(regionId) {
 // ============================================================
 // Mode switching
 // ============================================================
+function closeTool() {
+    document.getElementById('tool-panel').style.display = 'none';
+    selectedRegion = null;
+    drawDots();
+    drawArcs();
+}
+
 function setMode(mode) {
     currentMode = mode;
     document.querySelectorAll('.mode-btn').forEach(b => {
