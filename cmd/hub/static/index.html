@@ -681,7 +681,7 @@ function applyFilter() {
     const picker = document.getElementById('region-picker');
     picker.style.display = currentFilter === 'custom' ? 'block' : 'none';
 
-    // When switching to a preset, sync the checkboxes
+    // When switching to a preset, sync the checkboxes to match
     if (currentFilter !== 'custom') {
         const ids = getFilteredRegionIds();
         selectedRegionIds = ids;
@@ -689,6 +689,11 @@ function applyFilter() {
             cb.checked = ids.has(cb.value);
         });
     }
+
+    // Force clean redraw — remove all arcs/labels first to avoid stale D3 joins
+    d3.select('#arcs-layer').selectAll('*').remove();
+    d3.select('#arc-labels-layer').selectAll('*').remove();
+
     updateStats();
     drawDots();
     drawArcs();
