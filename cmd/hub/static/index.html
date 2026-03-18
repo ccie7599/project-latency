@@ -293,6 +293,23 @@ select option { background: #001a00; }
     vertical-align: middle;
 }
 
+/* Zoom reset */
+#zoom-reset {
+    position: absolute;
+    bottom: 44px;
+    left: 12px;
+    z-index: 10;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    color: var(--green-dim);
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 5px 12px;
+    cursor: pointer;
+}
+#zoom-reset:hover { color: var(--green); border-color: var(--green-mid); }
+
 /* Region picker */
 .continent-group { margin-bottom: 4px; }
 .continent-toggle {
@@ -416,6 +433,8 @@ select option { background: #001a00; }
     <canvas id="heatmap-canvas"></canvas>
 </div>
 
+<button id="zoom-reset" onclick="resetZoom()" title="Reset zoom">RESET VIEW</button>
+
 <div id="legend">
     <span><span class="legend-dot" style="background:var(--green)"></span> &lt;50MS</span>
     <span><span class="legend-dot" style="background:var(--amber)"></span> 50-150MS</span>
@@ -493,13 +512,29 @@ async function initMap() {
 
     g = svg.append('g');
 
-    // Zoom behavior
+    // Zoom behavior — filter to avoid trapping touch users
     zoom = d3.zoom()
         .scaleExtent([1, 12])
+        .filter((event) => {
+            // Always allow programmatic zooms
+            if (!event.sourceEvent) return true;
+            // Allow mouse wheel and drag
+            if (event.type === 'wheel' || event.type === 'mousedown') return true;
+            // Touch: allow if map is zoomed in, block at scale=1 so browser zoom works
+            if (event.sourceEvent?.touches) {
+                const currentTransform = d3.zoomTransform(svg.node());
+                if (currentTransform.k <= 1.05 && event.sourceEvent.touches.length >= 2) {
+                    return false; // let browser handle pinch-out at min zoom
+                }
+            }
+            return true;
+        })
         .on('zoom', (event) => {
             g.attr('transform', event.transform);
         });
     svg.call(zoom);
+    // Prevent double-tap zoom on touch (interferes with region click)
+    svg.on('dblclick.zoom', null);
 
     // Load world topology
     const world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
@@ -922,6 +957,10 @@ function showRegionDetail(regionId) {
 // ============================================================
 // Mode switching
 // ============================================================
+function resetZoom() {
+    svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+}
+
 function closeTool() {
     document.getElementById('tool-panel').style.display = 'none';
     selectedRegion = null;
