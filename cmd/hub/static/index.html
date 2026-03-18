@@ -1111,7 +1111,7 @@ async function measureClientLatency() {
 
     // Measure all regions in parallel
     const promises = allRegions.map(async (region) => {
-        const url = `http://${region.short}.${baseDomain}:8080/ping`;
+        const url = `https://${region.short}.${baseDomain}/ping`;
         try {
             await fetch(url, { mode: 'cors', cache: 'no-store' }); // warmup
             const samples = [];

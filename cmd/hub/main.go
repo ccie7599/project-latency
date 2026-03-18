@@ -94,8 +94,10 @@ func main() {
 	seedRoutes := os.Getenv("NATS_SEED_ROUTES") // empty for hub (it IS the seed)
 	listenAddr := os.Getenv("LISTEN_ADDR")
 	if listenAddr == "" {
-		listenAddr = ":8443"
+		listenAddr = ":443"
 	}
+	tlsCert := os.Getenv("TLS_CERT")
+	tlsKey := os.Getenv("TLS_KEY")
 	metricsAddr := os.Getenv("METRICS_ADDR")
 	if metricsAddr == "" {
 		metricsAddr = ":2112"
@@ -188,9 +190,16 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 	}
 	go func() {
-		log.Printf("HTTP listening on %s", listenAddr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http: %v", err)
+		if tlsCert != "" && tlsKey != "" {
+			log.Printf("HTTPS listening on %s", listenAddr)
+			if err := httpServer.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("https: %v", err)
+			}
+		} else {
+			log.Printf("HTTP listening on %s (no TLS)", listenAddr)
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("http: %v", err)
+			}
 		}
 	}()
 

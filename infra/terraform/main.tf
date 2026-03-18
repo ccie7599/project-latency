@@ -127,7 +127,9 @@ resource "linode_instance" "hub" {
       "Restart=always",
       "RestartSec=5",
       "Environment=REGION=${var.hub_region}",
-      "Environment=LISTEN_ADDR=:80",
+      "Environment=LISTEN_ADDR=:443",
+      "Environment=TLS_CERT=/etc/latency/fullchain.pem",
+      "Environment=TLS_KEY=/etc/latency/privkey.pem",
       "Environment=METRICS_ADDR=:2112",
       "Environment=PROMETHEUS_URL=http://localhost:9090",
       "Environment=AUTH_TOKEN=${var.auth_token}",
@@ -165,10 +167,10 @@ resource "linode_firewall" "hub" {
   tags  = local.common_tags
 
   inbound {
-    label    = "http-ui"
+    label    = "https-ui"
     action   = "ACCEPT"
     protocol = "TCP"
-    ports    = "80"
+    ports    = "443"
     ipv4     = [var.admin_ip, "172.234.206.146/32"]
   }
 
@@ -207,10 +209,10 @@ resource "linode_firewall" "agents" {
   tags  = local.common_tags
 
   inbound {
-    label    = "http-ping"
+    label    = "https-ping"
     action   = "ACCEPT"
     protocol = "TCP"
-    ports    = "8080"
+    ports    = "443"
     ipv4     = ["${linode_instance.hub.ip_address}/32", var.admin_ip]
   }
 

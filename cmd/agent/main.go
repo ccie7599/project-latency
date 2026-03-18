@@ -22,8 +22,10 @@ func main() {
 	seedRoutes := os.Getenv("NATS_SEED_ROUTES") // nats-route://hub:6222
 	listenAddr := os.Getenv("LISTEN_ADDR")
 	if listenAddr == "" {
-		listenAddr = ":8080"
+		listenAddr = ":443"
 	}
+	tlsCert := os.Getenv("TLS_CERT") // /etc/latency/fullchain.pem
+	tlsKey := os.Getenv("TLS_KEY")   // /etc/latency/privkey.pem
 	clusterPort := 6222
 	monitorPort := 8222
 	clientPort := 4222
@@ -89,9 +91,16 @@ func main() {
 		WriteTimeout: 5 * time.Second,
 	}
 	go func() {
-		log.Printf("HTTP listening on %s", listenAddr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http: %v", err)
+		if tlsCert != "" && tlsKey != "" {
+			log.Printf("HTTPS listening on %s", listenAddr)
+			if err := httpServer.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("https: %v", err)
+			}
+		} else {
+			log.Printf("HTTP listening on %s (no TLS)", listenAddr)
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("http: %v", err)
+			}
 		}
 	}()
 
