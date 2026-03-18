@@ -836,24 +836,32 @@ function drawArcs() {
         .append('text')
         .attr('class', 'arc-label');
 
+    // Compute arc midpoint: the SVG arc uses radius dr = chord * 1.5
+    // The arc bulges perpendicular to the chord. For sweep-flag=1, it bulges
+    // to the right of the source→target direction (visually upward for L→R arcs).
+    function arcMidpoint(d) {
+        const src = regionMap[d.source];
+        const tgt = regionMap[d.target];
+        const s = projection([src.lon, src.lat]);
+        const t = projection([tgt.lon, tgt.lat]);
+        const mx = (s[0] + t[0]) / 2;
+        const my = (s[1] + t[1]) / 2;
+        const dx = t[0] - s[0], dy = t[1] - s[1];
+        const chord = Math.sqrt(dx * dx + dy * dy);
+        if (chord < 1) return [mx, my];
+        const dr = chord * 1.5;
+        // Sagitta (bulge height) = r - sqrt(r^2 - (chord/2)^2)
+        const halfChord = chord / 2;
+        const sagitta = dr - Math.sqrt(Math.max(0, dr * dr - halfChord * halfChord));
+        // Perpendicular unit vector (rotated 90° CW for sweep=1)
+        const nx = -dy / chord;
+        const ny = dx / chord;
+        return [mx + nx * sagitta, my + ny * sagitta];
+    }
+
     arcLabels.merge(labelEnter)
-        .attr('x', d => {
-            const src = regionMap[d.source];
-            const tgt = regionMap[d.target];
-            const s = projection([src.lon, src.lat]);
-            const t = projection([tgt.lon, tgt.lat]);
-            return (s[0] + t[0]) / 2;
-        })
-        .attr('y', d => {
-            const src = regionMap[d.source];
-            const tgt = regionMap[d.target];
-            const s = projection([src.lon, src.lat]);
-            const t = projection([tgt.lon, tgt.lat]);
-            // Offset upward to sit on the arc curve
-            const mid = (s[1] + t[1]) / 2;
-            const dx = Math.abs(t[0] - s[0]);
-            return mid - dx * 0.08;
-        })
+        .attr('x', d => arcMidpoint(d)[0])
+        .attr('y', d => arcMidpoint(d)[1])
         .attr('fill', d => rttColor(d.rtt_ms))
         .text(d => Math.round(d.rtt_ms));
 
