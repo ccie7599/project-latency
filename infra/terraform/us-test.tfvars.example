@@ -1,0 +1,27 @@
+# US-only test deployment
+# Copy to us-test.tfvars and fill in values
+# Usage: terraform apply -var-file=us-test.tfvars
+
+linode_token   = ""
+ssh_public_key = ""
+admin_ip       = "47.224.104.170/32"
+auth_token     = ""
+hub_region     = "us-ord"
+domain         = "connected-cloud.io"
+
+# 12 US regions: 10 core (Nanode $5/mo) + 2 distributed (edge $43/mo)
+# Total: 10×$5 + 2×$43 + $24 hub = $160/mo
+agent_regions = {
+  "us-ord"       = { label = "probe-ord" }
+  "us-east"      = { label = "probe-ewr" }
+  "us-central"   = { label = "probe-dfw" }
+  "us-west"      = { label = "probe-fmt" }
+  "us-southeast" = { label = "probe-atl" }
+  "us-lax"       = { label = "probe-lax" }
+  "us-mia"       = { label = "probe-mia" }
+  "us-sea"       = { label = "probe-sea" }
+  "us-iad"       = { label = "probe-iad" }
+  "us-iad-2"     = { label = "probe-iad2" }
+  "us-den-1"     = { label = "probe-den" }
+  "us-hou-1"     = { label = "probe-hou" }
+}

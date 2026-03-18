@@ -10,7 +10,7 @@ variable "ssh_public_key" {
 }
 
 variable "admin_ip" {
-  description = "Admin IP for SSH access (CIDR)"
+  description = "Admin/home IP for SSH and UI access (CIDR, e.g., 1.2.3.4/32)"
   type        = string
 }
 
@@ -46,7 +46,7 @@ variable "hub_binary_path" {
 
 variable "agent_regions" {
   description = "Map of region IDs to deploy agents to. Set to null to deploy to all regions."
-  type        = map(object({
+  type = map(object({
     label = string
   }))
   default = null

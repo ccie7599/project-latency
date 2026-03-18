@@ -1,56 +1,67 @@
 locals {
+  # Distributed (edge) regions require g6-dedicated-edge-2 ($43/mo, smallest available)
+  # Core regions use g6-nanode-1 ($5/mo)
+  distributed_regions = toset([
+    "nz-akl-1", "us-den-1", "de-ham-1", "za-jnb-1", "my-kul-1",
+    "co-bog-1", "mx-qro-1", "us-hou-1", "cl-scl-1", "de-ber-1",
+    "co-bog-2", "fr-mrs-2",
+  ])
+
   # All 46 Linode regions
   all_regions = {
-    "us-ord"        = { label = "probe-ord" }
-    "us-east"       = { label = "probe-ewr" }
-    "us-central"    = { label = "probe-dfw" }
-    "us-west"       = { label = "probe-fmt" }
-    "us-southeast"  = { label = "probe-atl" }
-    "us-lax"        = { label = "probe-lax" }
-    "us-mia"        = { label = "probe-mia" }
-    "us-sea"        = { label = "probe-sea" }
-    "us-iad"        = { label = "probe-iad" }
-    "us-iad-2"      = { label = "probe-iad2" }
-    "us-den-1"      = { label = "probe-den" }
-    "us-hou-1"      = { label = "probe-hou" }
-    "ca-central"    = { label = "probe-yyz" }
-    "br-gru"        = { label = "probe-gru" }
-    "co-bog-1"      = { label = "probe-bog1" }
-    "co-bog-2"      = { label = "probe-bog2" }
-    "mx-qro-1"      = { label = "probe-qro" }
-    "cl-scl-1"      = { label = "probe-scl" }
-    "eu-west"       = { label = "probe-lon" }
-    "gb-lon"        = { label = "probe-lon2" }
-    "eu-central"    = { label = "probe-fra" }
-    "de-fra-2"      = { label = "probe-fra2" }
-    "fr-par"        = { label = "probe-par" }
-    "fr-par-2"      = { label = "probe-par2" }
-    "nl-ams"        = { label = "probe-ams" }
-    "se-sto"        = { label = "probe-sto" }
-    "es-mad"        = { label = "probe-mad" }
-    "it-mil"        = { label = "probe-mil" }
-    "de-ber-1"      = { label = "probe-ber" }
-    "de-ham-1"      = { label = "probe-ham" }
-    "no-osl-1"      = { label = "probe-osl" }
-    "fr-mrs-2"      = { label = "probe-mrs" }
-    "ap-south"      = { label = "probe-sin" }
-    "sg-sin-2"      = { label = "probe-sin2" }
-    "ap-northeast"  = { label = "probe-tyo2" }
-    "jp-tyo-3"      = { label = "probe-tyo3" }
-    "jp-osa"        = { label = "probe-osa" }
-    "ap-west"       = { label = "probe-bom" }
-    "in-bom-2"      = { label = "probe-bom2" }
-    "in-maa"        = { label = "probe-maa" }
-    "id-cgk"        = { label = "probe-cgk" }
-    "my-kul-1"      = { label = "probe-kul" }
-    "ap-southeast"  = { label = "probe-syd" }
-    "au-mel"        = { label = "probe-mel" }
-    "nz-akl-1"      = { label = "probe-akl" }
-    "za-jnb-1"      = { label = "probe-jnb" }
+    "us-ord"        = { label = "probe-ord",  short = "ord"  }
+    "us-east"       = { label = "probe-ewr",  short = "ewr"  }
+    "us-central"    = { label = "probe-dfw",  short = "dfw"  }
+    "us-west"       = { label = "probe-fmt",  short = "fmt"  }
+    "us-southeast"  = { label = "probe-atl",  short = "atl"  }
+    "us-lax"        = { label = "probe-lax",  short = "lax"  }
+    "us-mia"        = { label = "probe-mia",  short = "mia"  }
+    "us-sea"        = { label = "probe-sea",  short = "sea"  }
+    "us-iad"        = { label = "probe-iad",  short = "iad"  }
+    "us-iad-2"      = { label = "probe-iad2", short = "iad2" }
+    "us-den-1"      = { label = "probe-den",  short = "den"  }
+    "us-hou-1"      = { label = "probe-hou",  short = "hou"  }
+    "ca-central"    = { label = "probe-yyz",  short = "yyz"  }
+    "br-gru"        = { label = "probe-gru",  short = "gru"  }
+    "co-bog-1"      = { label = "probe-bog1", short = "bog1" }
+    "co-bog-2"      = { label = "probe-bog2", short = "bog2" }
+    "mx-qro-1"      = { label = "probe-qro",  short = "qro"  }
+    "cl-scl-1"      = { label = "probe-scl",  short = "scl"  }
+    "eu-west"       = { label = "probe-lon",  short = "lon"  }
+    "gb-lon"        = { label = "probe-lon2", short = "lon2" }
+    "eu-central"    = { label = "probe-fra",  short = "fra"  }
+    "de-fra-2"      = { label = "probe-fra2", short = "fra2" }
+    "fr-par"        = { label = "probe-par",  short = "par"  }
+    "fr-par-2"      = { label = "probe-par2", short = "par2" }
+    "nl-ams"        = { label = "probe-ams",  short = "ams"  }
+    "se-sto"        = { label = "probe-sto",  short = "sto"  }
+    "es-mad"        = { label = "probe-mad",  short = "mad"  }
+    "it-mil"        = { label = "probe-mil",  short = "mil"  }
+    "de-ber-1"      = { label = "probe-ber",  short = "ber"  }
+    "de-ham-1"      = { label = "probe-ham",  short = "ham"  }
+    "no-osl-1"      = { label = "probe-osl",  short = "osl"  }
+    "fr-mrs-2"      = { label = "probe-mrs",  short = "mrs"  }
+    "ap-south"      = { label = "probe-sin",  short = "sin"  }
+    "sg-sin-2"      = { label = "probe-sin2", short = "sin2" }
+    "ap-northeast"  = { label = "probe-tyo2", short = "tyo2" }
+    "jp-tyo-3"      = { label = "probe-tyo3", short = "tyo3" }
+    "jp-osa"        = { label = "probe-osa",  short = "osa"  }
+    "ap-west"       = { label = "probe-bom",  short = "bom"  }
+    "in-bom-2"      = { label = "probe-bom2", short = "bom2" }
+    "in-maa"        = { label = "probe-maa",  short = "maa"  }
+    "id-cgk"        = { label = "probe-cgk",  short = "cgk"  }
+    "my-kul-1"      = { label = "probe-kul",  short = "kul"  }
+    "ap-southeast"  = { label = "probe-syd",  short = "syd"  }
+    "au-mel"        = { label = "probe-mel",  short = "mel"  }
+    "nz-akl-1"      = { label = "probe-akl",  short = "akl"  }
+    "za-jnb-1"      = { label = "probe-jnb",  short = "jnb"  }
   }
 
   agent_regions = var.agent_regions != null ? var.agent_regions : local.all_regions
   common_tags   = ["project:latency", "owner:brian"]
+
+  # Hub IP for firewall rules (available after hub is created)
+  hub_ip_cidr = "${linode_instance.hub.ip_address}/32"
 }
 
 # ============================================================
@@ -87,7 +98,6 @@ resource "linode_instance" "hub" {
       "cp /tmp/prometheus-*/promtool /usr/local/bin/",
       "mkdir -p /etc/prometheus /var/lib/prometheus",
 
-      # Prometheus config — scrape the hub's metrics endpoint
       "cat > /etc/prometheus/prometheus.yml << 'PROMCFG'",
       "global:",
       "  scrape_interval: 10s",
@@ -97,7 +107,6 @@ resource "linode_instance" "hub" {
       "      - targets: ['localhost:2112']",
       "PROMCFG",
 
-      # Prometheus systemd unit
       "cat > /etc/systemd/system/prometheus.service << 'UNIT'",
       "[Unit]",
       "Description=Prometheus",
@@ -111,7 +120,6 @@ resource "linode_instance" "hub" {
       "WantedBy=multi-user.target",
       "UNIT",
 
-      # Hub systemd unit
       "cat > /etc/systemd/system/latency-hub.service << 'UNIT'",
       "[Unit]",
       "Description=Linode Latency Hub",
@@ -122,7 +130,7 @@ resource "linode_instance" "hub" {
       "Restart=always",
       "RestartSec=5",
       "Environment=REGION=${var.hub_region}",
-      "Environment=LISTEN_ADDR=:443",
+      "Environment=LISTEN_ADDR=:80",
       "Environment=METRICS_ADDR=:2112",
       "Environment=PROMETHEUS_URL=http://localhost:9090",
       "Environment=AUTH_TOKEN=${var.auth_token}",
@@ -148,24 +156,16 @@ resource "linode_firewall" "hub" {
   label = "latency-hub-fw"
   tags  = local.common_tags
 
+  # HTTP UI — admin IP only
   inbound {
-    label    = "https"
-    action   = "ACCEPT"
-    protocol = "TCP"
-    ports    = "443"
-    ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
-  }
-
-  inbound {
-    label    = "http"
+    label    = "http-admin"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "80"
-    ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
+    ipv4     = [var.admin_ip]
   }
 
+  # NATS cluster routes — all agents connect here (dynamic IPs)
   inbound {
     label    = "nats-cluster"
     action   = "ACCEPT"
@@ -175,15 +175,10 @@ resource "linode_firewall" "hub" {
     ipv6     = ["::/0"]
   }
 
-  inbound {
-    label    = "nats-monitor"
-    action   = "ACCEPT"
-    protocol = "TCP"
-    ports    = "8222"
-    ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
-  }
+  # NATS monitoring — hub scrapes itself on localhost, no external needed
+  # (agents' 8222 is scraped by hub, not the other way)
 
+  # SSH — admin only
   inbound {
     label    = "ssh-admin"
     action   = "ACCEPT"
@@ -205,26 +200,40 @@ module "agent" {
   for_each = local.agent_regions
   source   = "./modules/agent"
 
-  region          = each.key
-  label           = each.value.label
+  region           = each.key
+  label            = each.value.label
+  is_distributed   = contains(local.distributed_regions, each.key)
   nats_seed_routes = "nats-route://${linode_instance.hub.ip_address}:6222"
-  binary_path     = var.agent_binary_path
-  ssh_key         = var.ssh_public_key
-  admin_ip        = var.admin_ip
-  tags            = local.common_tags
+  binary_path      = var.agent_binary_path
+  ssh_key          = var.ssh_public_key
+  hub_ip           = "${linode_instance.hub.ip_address}/32"
+  admin_ip         = var.admin_ip
+  tags             = local.common_tags
 }
 
 # ============================================================
-# DNS
+# DNS — hub + per-region agent records
 # ============================================================
 data "linode_domain" "main" {
   domain = var.domain
 }
 
+# Hub: latency.connected-cloud.io
 resource "linode_domain_record" "hub" {
   domain_id   = data.linode_domain.main.id
   name        = "latency"
   record_type = "A"
   target      = linode_instance.hub.ip_address
+  ttl_sec     = 300
+}
+
+# Per-agent: {short}.latency.connected-cloud.io
+resource "linode_domain_record" "agent" {
+  for_each = module.agent
+
+  domain_id   = data.linode_domain.main.id
+  name        = "${local.agent_regions[each.key].short}.latency"
+  record_type = "A"
+  target      = each.value.ip_address
   ttl_sec     = 300
 }

@@ -6,6 +6,12 @@ variable "label" {
   type = string
 }
 
+variable "is_distributed" {
+  description = "Whether this is a distributed/edge region (requires g6-dedicated-edge-2)"
+  type        = bool
+  default     = false
+}
+
 variable "nats_seed_routes" {
   type = string
 }
@@ -18,8 +24,14 @@ variable "ssh_key" {
   type = string
 }
 
+variable "hub_ip" {
+  description = "Hub IP in CIDR notation for firewall rules"
+  type        = string
+}
+
 variable "admin_ip" {
-  type = string
+  description = "Admin/home IP in CIDR notation for firewall rules"
+  type        = string
 }
 
 variable "tags" {
@@ -27,10 +39,16 @@ variable "tags" {
   default = []
 }
 
+locals {
+  # Distributed regions: smallest available is g6-dedicated-edge-2 ($43/mo)
+  # Core regions: g6-nanode-1 ($5/mo)
+  instance_type = var.is_distributed ? "g6-dedicated-edge-2" : "g6-nanode-1"
+}
+
 resource "linode_instance" "agent" {
   label     = var.label
   region    = var.region
-  type      = "g6-nanode-1"
+  type      = local.instance_type
   image     = "linode/ubuntu24.04"
   tags      = var.tags
   root_pass = null
@@ -83,15 +101,16 @@ resource "linode_firewall" "agent" {
   label = "${var.label}-fw"
   tags  = var.tags
 
+  # HTTP /ping — hub + admin only
   inbound {
-    label    = "http-ping"
+    label    = "http-ping-hub"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "8080"
-    ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
+    ipv4     = [var.hub_ip, var.admin_ip]
   }
 
+  # NATS cluster routes — all cluster members need to connect
   inbound {
     label    = "nats-cluster"
     action   = "ACCEPT"
@@ -101,15 +120,16 @@ resource "linode_firewall" "agent" {
     ipv6     = ["::/0"]
   }
 
+  # NATS monitoring — hub only (for /routez scraping)
   inbound {
-    label    = "nats-monitor"
+    label    = "nats-monitor-hub"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "8222"
-    ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
+    ipv4     = [var.hub_ip]
   }
 
+  # SSH — admin only
   inbound {
     label    = "ssh-admin"
     action   = "ACCEPT"
