@@ -399,6 +399,7 @@ select option { background: #001a00; }
 </div>
 
 <div class="panel" id="detail">
+    <button id="tool-close" onclick="document.getElementById('detail').style.display='none'; selectedRegion=null; drawDots(); drawArcs();">&times;</button>
     <h3 id="detail-title">REGION DETAIL</h3>
     <div id="detail-content"></div>
 </div>
