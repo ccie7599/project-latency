@@ -35,7 +35,7 @@ locals {
     "fr-par-2"      = { label = "probe-par2", short = "par2" }
     "nl-ams"        = { label = "probe-ams",  short = "ams"  }
     "se-sto"        = { label = "probe-sto",  short = "sto"  }
-    "es-mad"        = { label = "probe-mad",  short = "mad"  }
+    # "es-mad" excluded — region currently restricted for new instances
     "it-mil"        = { label = "probe-mil",  short = "mil"  }
     "de-ber-1"      = { label = "probe-ber",  short = "ber"  }
     "de-ham-1"      = { label = "probe-ham",  short = "ham"  }
@@ -59,9 +59,6 @@ locals {
 
   agent_regions = var.agent_regions != null ? var.agent_regions : local.all_regions
   common_tags   = ["project:latency", "owner:brian"]
-
-  # Hub IP for firewall rules (available after hub is created)
-  hub_ip_cidr = "${linode_instance.hub.ip_address}/32"
 }
 
 # ============================================================
@@ -152,20 +149,21 @@ resource "linode_instance" "hub" {
   }
 }
 
+# ============================================================
+# Firewalls — one for hub, one shared across all agents
+# ============================================================
 resource "linode_firewall" "hub" {
   label = "latency-hub-fw"
   tags  = local.common_tags
 
-  # HTTP UI — admin + this server (for deployment verification)
   inbound {
-    label    = "http-admin"
+    label    = "http-ui"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "80"
     ipv4     = [var.admin_ip, "172.234.206.146/32"]
   }
 
-  # NATS cluster routes — all agents connect here (dynamic IPs)
   inbound {
     label    = "nats-cluster"
     action   = "ACCEPT"
@@ -175,31 +173,69 @@ resource "linode_firewall" "hub" {
     ipv6     = ["::/0"]
   }
 
-  # NATS monitoring — hub scrapes itself on localhost, no external needed
-  # (agents' 8222 is scraped by hub, not the other way)
-
-  # SSH — admin only
   inbound {
-    label    = "ssh-admin"
-    action   = "ACCEPT"
-    protocol = "TCP"
-    ports    = "22"
-    ipv4     = [var.admin_ip, "172.234.206.146/32"]
-  }
-
-  # NATS monitoring — this server for verification
-  inbound {
-    label    = "nats-monitor-verify"
+    label    = "nats-monitor"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "8222"
     ipv4     = ["172.234.206.146/32"]
   }
 
+  inbound {
+    label    = "ssh"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "22"
+    ipv4     = [var.admin_ip, "172.234.206.146/32"]
+  }
+
   inbound_policy  = "DROP"
   outbound_policy = "ACCEPT"
 
   linodes = [linode_instance.hub.id]
+}
+
+resource "linode_firewall" "agents" {
+  label = "latency-agents-fw"
+  tags  = local.common_tags
+
+  inbound {
+    label    = "http-ping"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "8080"
+    ipv4     = ["${linode_instance.hub.ip_address}/32", var.admin_ip]
+  }
+
+  inbound {
+    label    = "nats-cluster"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "6222"
+    ipv4     = ["0.0.0.0/0"]
+    ipv6     = ["::/0"]
+  }
+
+  inbound {
+    label    = "nats-monitor"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "8222"
+    ipv4     = ["${linode_instance.hub.ip_address}/32"]
+  }
+
+  inbound {
+    label    = "ssh"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "22"
+    ipv4     = [var.admin_ip, "172.234.206.146/32"]
+  }
+
+  inbound_policy  = "DROP"
+  outbound_policy = "ACCEPT"
+
+  linodes = [for mod in module.agent : mod.instance_id]
 }
 
 # ============================================================
@@ -215,8 +251,6 @@ module "agent" {
   nats_seed_routes = "nats-route://${linode_instance.hub.ip_address}:6222"
   binary_path      = var.agent_binary_path
   ssh_key          = var.ssh_public_key
-  hub_ip           = "${linode_instance.hub.ip_address}/32"
-  admin_ip         = var.admin_ip
   tags             = local.common_tags
 }
 

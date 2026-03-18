@@ -303,6 +303,23 @@ select option { background: #001a00; }
         <button class="mode-btn" data-mode="client" onclick="setMode('client')">CLIENT LATENCY</button>
     </div>
     <div class="panel">
+        <h3>Filter</h3>
+        <select id="filter-select" onchange="applyFilter()">
+            <option value="all">ALL ROUTES</option>
+            <option value="unique">UNIQUE REGIONS ONLY</option>
+            <optgroup label="CONTINENT">
+                <option value="continent:na">NORTH AMERICA</option>
+                <option value="continent:sa">SOUTH AMERICA</option>
+                <option value="continent:eu">EUROPE</option>
+                <option value="continent:ap">ASIA PACIFIC</option>
+                <option value="continent:oc">OCEANIA</option>
+                <option value="continent:af">AFRICA</option>
+            </optgroup>
+            <optgroup label="COUNTRY" id="filter-countries">
+            </optgroup>
+        </select>
+    </div>
+    <div class="panel">
         <h3>Tools</h3>
         <button class="mode-btn" data-mode="az" onclick="setMode('az')">AZ PAIR SELECTOR</button>
         <button class="mode-btn" data-mode="finder" onclick="setMode('finder')">REGION FINDER</button>
@@ -341,6 +358,7 @@ let allRegions = [];
 let latencyResults = [];
 let selectedRegion = null;
 let currentMode = 'map';
+let currentFilter = 'all'; // 'all', 'unique', 'continent:xx', 'country:xx'
 let svg, g, projection, pathGen, zoom;
 
 // ============================================================
@@ -454,6 +472,34 @@ async function loadRegions() {
     const resp = await fetch('/api/v1/regions');
     allRegions = await resp.json();
     document.getElementById('stat-nodes').textContent = allRegions.length;
+
+    // Populate country filter options
+    const countries = {};
+    const countryLabels = {
+        us: 'UNITED STATES', ca: 'CANADA', mx: 'MEXICO',
+        br: 'BRAZIL', co: 'COLOMBIA', cl: 'CHILE',
+        gb: 'UNITED KINGDOM', de: 'GERMANY', fr: 'FRANCE',
+        nl: 'NETHERLANDS', se: 'SWEDEN', es: 'SPAIN',
+        it: 'ITALY', no: 'NORWAY',
+        sg: 'SINGAPORE', jp: 'JAPAN', in: 'INDIA',
+        id: 'INDONESIA', my: 'MALAYSIA',
+        au: 'AUSTRALIA', nz: 'NEW ZEALAND',
+        za: 'SOUTH AFRICA',
+    };
+    allRegions.forEach(r => {
+        if (!countries[r.country]) countries[r.country] = 0;
+        countries[r.country]++;
+    });
+    const optgroup = document.getElementById('filter-countries');
+    Object.keys(countries).sort().forEach(cc => {
+        if (countries[cc] >= 2) { // only show countries with 2+ regions
+            const opt = document.createElement('option');
+            opt.value = `country:${cc}`;
+            opt.textContent = `${countryLabels[cc] || cc.toUpperCase()} (${countries[cc]})`;
+            optgroup.appendChild(opt);
+        }
+    });
+
     drawDots();
 }
 
@@ -470,10 +516,13 @@ async function loadMatrix() {
 }
 
 function updateStats() {
-    const n = latencyResults.length;
+    const filteredIds = getFilteredRegionIds();
+    const filtered = latencyResults.filter(r => filteredIds.has(r.source) && filteredIds.has(r.target));
+    const n = filtered.length;
+    document.getElementById('stat-nodes').textContent = filteredIds.size;
     document.getElementById('stat-routes').textContent = n;
     if (n > 0) {
-        const avg = latencyResults.reduce((s, r) => s + r.rtt_ms, 0) / n;
+        const avg = filtered.reduce((s, r) => s + r.rtt_ms, 0) / n;
         document.getElementById('stat-avg').textContent = avg.toFixed(1) + 'MS';
     }
     document.getElementById('stat-scrape').textContent = new Date().toLocaleTimeString();
@@ -485,6 +534,7 @@ function updateStats() {
 function drawDots() {
     const regionMap = {};
     allRegions.forEach(r => regionMap[r.id] = r);
+    const filteredIds = getFilteredRegionIds();
 
     const dots = d3.select('#dots-layer')
         .selectAll('.region-dot')
@@ -493,7 +543,6 @@ function drawDots() {
     dots.enter()
         .append('circle')
         .attr('class', 'region-dot')
-        .attr('r', 3)
         .attr('cx', d => projection([d.lon, d.lat])[0])
         .attr('cy', d => projection([d.lon, d.lat])[1])
         .on('click', (event, d) => onRegionClick(d))
@@ -502,7 +551,10 @@ function drawDots() {
 
     dots
         .attr('cx', d => projection([d.lon, d.lat])[0])
-        .attr('cy', d => projection([d.lon, d.lat])[1]);
+        .attr('cy', d => projection([d.lon, d.lat])[1])
+        .attr('r', d => d.id === selectedRegion ? 5 : filteredIds.has(d.id) ? 3 : 1.5)
+        .attr('fill', d => d.id === selectedRegion ? '#ffffff' : filteredIds.has(d.id) ? 'var(--green)' : 'var(--green-dark)')
+        .attr('opacity', d => filteredIds.has(d.id) ? 1 : 0.3);
 
     // Region labels (visible at zoom)
     const labels = d3.select('#labels-layer')
@@ -523,18 +575,66 @@ function drawDots() {
         .attr('y', d => projection([d.lon, d.lat])[1] + 3);
 }
 
+// ============================================================
+// Filtering
+// ============================================================
+function applyFilter() {
+    currentFilter = document.getElementById('filter-select').value;
+    drawDots();
+    drawArcs();
+}
+
+function getFilteredRegionIds() {
+    const regionMap = {};
+    allRegions.forEach(r => regionMap[r.id] = r);
+
+    if (currentFilter === 'all') {
+        return new Set(allRegions.map(r => r.id));
+    }
+
+    if (currentFilter === 'unique') {
+        // Keep only one region per city (first occurrence)
+        const seenCities = new Set();
+        const ids = new Set();
+        for (const r of allRegions) {
+            if (!seenCities.has(r.city)) {
+                seenCities.add(r.city);
+                ids.add(r.id);
+            }
+        }
+        return ids;
+    }
+
+    if (currentFilter.startsWith('continent:')) {
+        const cont = currentFilter.split(':')[1];
+        return new Set(allRegions.filter(r => r.continent === cont).map(r => r.id));
+    }
+
+    if (currentFilter.startsWith('country:')) {
+        const cc = currentFilter.split(':')[1];
+        return new Set(allRegions.filter(r => r.country === cc).map(r => r.id));
+    }
+
+    return new Set(allRegions.map(r => r.id));
+}
+
 function drawArcs() {
     if (currentMode !== 'map') return;
 
     const regionMap = {};
     allRegions.forEach(r => regionMap[r.id] = r);
 
-    let data = latencyResults;
+    const filteredIds = getFilteredRegionIds();
+
+    let data = latencyResults.filter(r =>
+        filteredIds.has(r.source) && filteredIds.has(r.target)
+    );
+
     if (selectedRegion) {
         data = data.filter(r => r.source === selectedRegion || r.target === selectedRegion);
     }
 
-    // Deduplicate: only keep one direction per pair (lower source ID)
+    // Deduplicate: only keep one direction per pair
     if (!selectedRegion) {
         const seen = new Set();
         data = data.filter(r => {
@@ -665,8 +765,12 @@ function showHeatmap() {
     const canvas = document.getElementById('heatmap-canvas');
     const ctx = canvas.getContext('2d');
 
+    const filteredIds = getFilteredRegionIds();
     const regionSet = new Set();
-    latencyResults.forEach(r => { regionSet.add(r.source); regionSet.add(r.target); });
+    latencyResults.forEach(r => {
+        if (filteredIds.has(r.source)) regionSet.add(r.source);
+        if (filteredIds.has(r.target)) regionSet.add(r.target);
+    });
     const regionIds = Array.from(regionSet).sort();
     const n = regionIds.length;
     if (n === 0) return;
