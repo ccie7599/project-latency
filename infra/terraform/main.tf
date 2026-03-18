@@ -156,13 +156,13 @@ resource "linode_firewall" "hub" {
   label = "latency-hub-fw"
   tags  = local.common_tags
 
-  # HTTP UI — admin IP only
+  # HTTP UI — admin + this server (for deployment verification)
   inbound {
     label    = "http-admin"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "80"
-    ipv4     = [var.admin_ip]
+    ipv4     = [var.admin_ip, "172.234.206.146/32"]
   }
 
   # NATS cluster routes — all agents connect here (dynamic IPs)
@@ -184,7 +184,16 @@ resource "linode_firewall" "hub" {
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "22"
-    ipv4     = [var.admin_ip]
+    ipv4     = [var.admin_ip, "172.234.206.146/32"]
+  }
+
+  # NATS monitoring — this server for verification
+  inbound {
+    label    = "nats-monitor-verify"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "8222"
+    ipv4     = ["172.234.206.146/32"]
   }
 
   inbound_policy  = "DROP"
@@ -211,29 +220,7 @@ module "agent" {
   tags             = local.common_tags
 }
 
-# ============================================================
-# DNS — hub + per-region agent records
-# ============================================================
-data "linode_domain" "main" {
-  domain = var.domain
-}
-
-# Hub: latency.connected-cloud.io
-resource "linode_domain_record" "hub" {
-  domain_id   = data.linode_domain.main.id
-  name        = "latency"
-  record_type = "A"
-  target      = linode_instance.hub.ip_address
-  ttl_sec     = 300
-}
-
-# Per-agent: {short}.latency.connected-cloud.io
-resource "linode_domain_record" "agent" {
-  for_each = module.agent
-
-  domain_id   = data.linode_domain.main.id
-  name        = "${local.agent_regions[each.key].short}.latency"
-  record_type = "A"
-  target      = each.value.ip_address
-  ttl_sec     = 300
-}
+# DNS is managed via Akamai Edge DNS (connected-cloud.io zone)
+# After apply, use outputs to create A records:
+#   latency.connected-cloud.io -> hub_ip
+#   {short}.latency.connected-cloud.io -> agent_ips[region]

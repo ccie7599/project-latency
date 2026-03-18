@@ -743,30 +743,45 @@ function showHeatmap() {
 async function measureClientLatency() {
     document.getElementById('detail').style.display = 'block';
     document.getElementById('detail-title').textContent = 'CLIENT LATENCY TEST';
-    document.getElementById('detail-content').innerHTML = '<div style="color:var(--green-dim)">MEASURING...</div>';
+    document.getElementById('detail-content').innerHTML = '<div style="color:var(--green-dim)">MEASURING 0/' + allRegions.length + '...</div>';
 
-    const hubOrigin = window.location.origin;
-    const results = [];
+    // Build per-region ping URLs: {short}.latency.connected-cloud.io:8080
+    const domain = window.location.hostname.replace(/^[^.]+\./, ''); // latency.connected-cloud.io -> connected-cloud.io...
+    // Derive base domain from hub hostname: latency.connected-cloud.io
+    const hubHost = window.location.hostname; // latency.connected-cloud.io
+    const baseDomain = hubHost; // short.latency.connected-cloud.io
 
-    for (const region of allRegions) {
-        // In production: each region has its own /ping endpoint
-        const url = `${hubOrigin}/ping`;
+    let done = 0;
+
+    // Measure all regions in parallel
+    const promises = allRegions.map(async (region) => {
+        const url = `http://${region.short}.${baseDomain}:8080/ping`;
         try {
-            await fetch(url, { cache: 'no-store' }); // warmup
+            await fetch(url, { mode: 'cors', cache: 'no-store' }); // warmup
             const samples = [];
             for (let i = 0; i < 3; i++) {
                 const t0 = performance.now();
-                await fetch(url, { cache: 'no-store' });
+                await fetch(url, { mode: 'cors', cache: 'no-store' });
                 samples.push(performance.now() - t0);
             }
             samples.sort((a, b) => a - b);
-            results.push({
+            done++;
+            document.getElementById('detail-content').innerHTML =
+                `<div style="color:var(--green-dim)">MEASURING ${done}/${allRegions.length}...</div>`;
+            return {
                 source: 'client', target: region.id,
                 rtt_ms: Math.round(samples[1] * 10) / 10
-            });
-        } catch (e) { /* skip */ }
-    }
+            };
+        } catch (e) {
+            done++;
+            return null;
+        }
+    });
 
+    const settled = await Promise.allSettled(promises);
+    const results = settled
+        .filter(r => r.status === 'fulfilled' && r.value)
+        .map(r => r.value);
     results.sort((a, b) => a.rtt_ms - b.rtt_ms);
 
     const regionMap = {};

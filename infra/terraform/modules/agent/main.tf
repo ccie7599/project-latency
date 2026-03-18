@@ -1,3 +1,11 @@
+terraform {
+  required_providers {
+    linode = {
+      source = "linode/linode"
+    }
+  }
+}
+
 variable "region" {
   type = string
 }
