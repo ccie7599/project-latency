@@ -97,7 +97,19 @@ resource "akamai_datastream" "latency" {
   properties  = [akamai_property.latency.id]
 
   dataset_fields = [
-    1002, 1005, 1013, 1015, 1016, 1017, 1102, 2010, 2012, 2014, 3000,
+    1000,  # CP code
+    1002,  # Request ID
+    1005,  # Bytes
+    1006,  # Client IP
+    1008,  # HTTP status code
+    1013,  # Request path
+    1016,  # Response Content-Type
+    1017,  # User-Agent
+    1102,  # Turn around time
+    2010,  # Cache status
+    2012,  # Country/Region
+    2014,  # City
+    3000,  # EdgeWorkers usage
   ]
 
   delivery_configuration {

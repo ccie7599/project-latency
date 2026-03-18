@@ -132,6 +132,17 @@
           "forceSslForward": true,
           "testObjectUrl": "/sureroute-test-object.txt"
         }
+      },
+      {
+        "name": "datastream",
+        "options": {
+          "enabled": true,
+          "datastreamIds": "105758",
+          "logEnabled": true,
+          "logStreamName": ["105758"],
+          "logStreamTitle": "latency-demo-ds2",
+          "streamType": "LOG"
+        }
       }
     ],
     "options": {
