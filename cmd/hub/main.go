@@ -664,10 +664,11 @@ func (h *Hub) serveIndexWithToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
-	// Replace placeholder with actual token
-	html := strings.Replace(string(data), "__AUTH_TOKEN__", h.authToken, -1)
+	// Remove the server-side token placeholder — client validates via API
+	html := strings.Replace(string(data), "__AUTH_TOKEN__", "", -1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Write([]byte(html))
 }
 

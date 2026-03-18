@@ -378,6 +378,74 @@ select option { background: #001a00; }
 }
 .picker-actions button:hover { border-color: var(--green-mid); color: var(--green-mid); }
 
+/* Auth gate */
+#auth-gate {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+.auth-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    padding: 32px 40px;
+    text-align: center;
+    max-width: 360px;
+    width: 90%;
+}
+.auth-card h1 {
+    font-size: 14px;
+    letter-spacing: 3px;
+    color: var(--green);
+    margin-bottom: 6px;
+    text-shadow: 0 0 10px var(--green-dim);
+}
+.auth-card p {
+    font-size: 11px;
+    color: var(--green-dim);
+    margin-bottom: 20px;
+}
+.auth-card input {
+    width: 100%;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    background: rgba(0,255,65,0.05);
+    border: 1px solid var(--green-dark);
+    color: var(--green);
+    font: inherit;
+    font-size: 13px;
+    text-align: center;
+    letter-spacing: 2px;
+}
+.auth-card input:focus {
+    outline: none;
+    border-color: var(--green-mid);
+}
+.auth-card button {
+    width: 100%;
+    padding: 8px;
+    background: rgba(0,255,65,0.1);
+    border: 1px solid var(--green-mid);
+    color: var(--green);
+    font: inherit;
+    font-size: 12px;
+    letter-spacing: 2px;
+    cursor: pointer;
+}
+.auth-card button:hover {
+    background: rgba(0,255,65,0.2);
+}
+.auth-error {
+    color: var(--red);
+    font-size: 11px;
+    margin-top: 8px;
+    display: none;
+}
+#app-shell { display: none; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -386,6 +454,17 @@ select option { background: #001a00; }
 </head>
 <body>
 
+<div id="auth-gate">
+    <div class="auth-card">
+        <h1>LINODE GLOBAL<br>NETWORK MONITOR</h1>
+        <p>ENTER ACCESS TOKEN TO CONTINUE</p>
+        <input type="password" id="token-input" placeholder="ACCESS TOKEN" autofocus>
+        <button onclick="submitToken()">AUTHENTICATE</button>
+        <div class="auth-error" id="auth-error">INVALID TOKEN</div>
+    </div>
+</div>
+
+<div id="app-shell">
 <div id="map-container"></div>
 
 <div id="header">
@@ -456,14 +535,57 @@ select option { background: #001a00; }
     <span><span class="legend-dot" style="background:var(--red)"></span> &gt;150MS</span>
 </div>
 
+</div><!-- /app-shell -->
+
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
 // ============================================================
 // State
 // ============================================================
-const AUTH_TOKEN = '__AUTH_TOKEN__'; // Replaced server-side at render time
+const SERVER_TOKEN = '__AUTH_TOKEN__'; // Replaced server-side at render time
+let AUTH_TOKEN = new URLSearchParams(window.location.search).get('auth')
+    || sessionStorage.getItem('latency_token')
+    || '';
 function authUrl(path) { return path + (path.includes('?') ? '&' : '?') + 'auth=' + AUTH_TOKEN; }
+
+// Auth gate
+async function submitToken() {
+    const input = document.getElementById('token-input').value.trim();
+    if (!input) return;
+    // Validate against server
+    const resp = await fetch(`/api/v1/health?auth=${input}`);
+    if (resp.ok) {
+        AUTH_TOKEN = input;
+        sessionStorage.setItem('latency_token', input);
+        document.getElementById('auth-gate').style.display = 'none';
+        document.getElementById('app-shell').style.display = 'block';
+        startApp();
+    } else {
+        document.getElementById('auth-error').style.display = 'block';
+    }
+}
+
+// Allow Enter key on token input
+document.getElementById('token-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitToken();
+});
+
+// Check if we already have a valid token
+(async function checkAuth() {
+    if (AUTH_TOKEN) {
+        const resp = await fetch(`/api/v1/health?auth=${AUTH_TOKEN}`);
+        if (resp.ok) {
+            sessionStorage.setItem('latency_token', AUTH_TOKEN);
+            document.getElementById('auth-gate').style.display = 'none';
+            document.getElementById('app-shell').style.display = 'block';
+            startApp();
+            return;
+        }
+    }
+    // No valid token — show gate
+    document.getElementById('auth-gate').style.display = 'flex';
+})();
 
 let allRegions = [];
 let latencyResults = [];
@@ -1334,13 +1456,13 @@ function connectWS() {
 // ============================================================
 // Startup
 // ============================================================
-(async function() {
+async function startApp() {
     await initMap();
     await loadRegions();
     await loadMatrix();
     connectWS();
     setInterval(loadMatrix, 30000);
-})();
+}
 </script>
 </body>
 </html>
