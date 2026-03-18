@@ -853,9 +853,9 @@ function drawArcs() {
         // Sagitta (bulge height) = r - sqrt(r^2 - (chord/2)^2)
         const halfChord = chord / 2;
         const sagitta = dr - Math.sqrt(Math.max(0, dr * dr - halfChord * halfChord));
-        // Perpendicular unit vector (rotated 90° CW for sweep=1)
-        const nx = -dy / chord;
-        const ny = dx / chord;
+        // Perpendicular unit vector — 90° CW in screen coords (Y-down) for sweep-flag=1
+        const nx = dy / chord;
+        const ny = -dx / chord;
         return [mx + nx * sagitta, my + ny * sagitta];
     }
 
