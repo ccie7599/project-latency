@@ -306,7 +306,7 @@ select option { background: #001a00; }
         <h3>Filter</h3>
         <select id="filter-select" onchange="applyFilter()">
             <option value="all">ALL ROUTES</option>
-            <option value="unique">UNIQUE REGIONS ONLY</option>
+            <option value="unique" selected>UNIQUE REGIONS ONLY</option>
             <optgroup label="CONTINENT">
                 <option value="continent:na">NORTH AMERICA</option>
                 <option value="continent:sa">SOUTH AMERICA</option>
@@ -358,7 +358,7 @@ let allRegions = [];
 let latencyResults = [];
 let selectedRegion = null;
 let currentMode = 'map';
-let currentFilter = 'all'; // 'all', 'unique', 'continent:xx', 'country:xx'
+let currentFilter = 'unique'; // 'all', 'unique', 'continent:xx', 'country:xx'
 let svg, g, projection, pathGen, zoom;
 
 // ============================================================
@@ -653,8 +653,7 @@ function drawArcs() {
 
     const arcEnter = arcs.enter()
         .append('path')
-        .attr('class', 'latency-arc')
-        .attr('filter', 'url(#arcglow)');
+        .attr('class', 'latency-arc');
 
     arcs.merge(arcEnter)
         .attr('d', d => {
