@@ -462,6 +462,9 @@ select option { background: #001a00; }
 // ============================================================
 // State
 // ============================================================
+const AUTH_TOKEN = '__AUTH_TOKEN__'; // Replaced server-side at render time
+function authUrl(path) { return path + (path.includes('?') ? '&' : '?') + 'auth=' + AUTH_TOKEN; }
+
 let allRegions = [];
 let latencyResults = [];
 let selectedRegion = null;
@@ -581,7 +584,7 @@ async function initMap() {
 // Data loading
 // ============================================================
 async function loadRegions() {
-    const resp = await fetch('/api/v1/regions');
+    const resp = await fetch(authUrl('/api/v1/regions'));
     allRegions = await resp.json();
     document.getElementById('stat-nodes').textContent = allRegions.length;
 
@@ -618,7 +621,7 @@ async function loadRegions() {
 
 async function loadMatrix() {
     try {
-        const resp = await fetch('/api/v1/matrix');
+        const resp = await fetch(authUrl('/api/v1/matrix'));
         const data = await resp.json();
         latencyResults = data.results || [];
         updateStats();
@@ -1169,7 +1172,7 @@ async function runLocate(lat, lon) {
     document.getElementById('locate-results').innerHTML = '<div style="color:var(--green-dim)">FINDING NEAREST REGIONS...</div>';
     let nearest = [];
     try {
-        const resp = await fetch(`/api/v1/nearest?lat=${lat}&lon=${lon}`);
+        const resp = await fetch(authUrl(`/api/v1/nearest?lat=${lat}&lon=${lon}`));
         const data = await resp.json();
         nearest = data.nearest || [];
     } catch (e) { /* continue with latency only */ }
@@ -1264,7 +1267,7 @@ async function loadAZPairs() {
     drawArcs();
 
     try {
-        const resp = await fetch(`/api/v1/az-pairs?primary=${primary}`);
+        const resp = await fetch(authUrl(`/api/v1/az-pairs?primary=${primary}`));
         const data = await resp.json();
         const pairs = data.pairs || [];
         const regionMap = {};
@@ -1307,7 +1310,7 @@ async function loadAZPairs() {
 // ============================================================
 function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws/live`);
+    const ws = new WebSocket(`${proto}//${location.host}/ws/live?auth=${AUTH_TOKEN}`);
     let reconnectDelay = 3000;
 
     ws.onmessage = (event) => {

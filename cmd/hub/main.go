@@ -170,18 +170,30 @@ func main() {
 
 	// HTTP API + frontend server
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/matrix", hub.handleMatrix)
-	mux.HandleFunc("/api/v1/pair/", hub.handlePair)
-	mux.HandleFunc("/api/v1/regions", hub.handleRegions)
-	mux.HandleFunc("/api/v1/nearest", hub.handleNearest)
-	mux.HandleFunc("/api/v1/az-pairs", hub.handleAZPairs)
-	mux.HandleFunc("/api/v1/health", hub.handleHealthAPI)
-	mux.HandleFunc("/api/v1/cluster", hub.handleCluster)
-	mux.HandleFunc("/ws/live", hub.handleWebSocket)
+
+	// Protected endpoints — require ?auth=TOKEN
+	mux.HandleFunc("/api/v1/matrix", hub.requireAuth(hub.handleMatrix))
+	mux.HandleFunc("/api/v1/pair/", hub.requireAuth(hub.handlePair))
+	mux.HandleFunc("/api/v1/regions", hub.requireAuth(hub.handleRegions))
+	mux.HandleFunc("/api/v1/nearest", hub.requireAuth(hub.handleNearest))
+	mux.HandleFunc("/api/v1/az-pairs", hub.requireAuth(hub.handleAZPairs))
+	mux.HandleFunc("/api/v1/health", hub.requireAuth(hub.handleHealthAPI))
+	mux.HandleFunc("/api/v1/cluster", hub.requireAuth(hub.handleCluster))
+	mux.HandleFunc("/ws/live", hub.requireAuth(hub.handleWebSocket))
+
+	// Unauthenticated — /ping for client latency measurement
 	mux.HandleFunc("/ping", hub.handlePing)
 
+	// Serve index.html with token injected, static assets as-is
 	staticFS, _ := fs.Sub(staticFiles, "static")
-	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+	fileServer := http.FileServer(http.FS(staticFS))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			hub.serveIndexWithToken(w, r)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 
 	httpServer := &http.Server{
 		Addr:         listenAddr,
@@ -625,6 +637,38 @@ func (h *Hub) broadcastLatest() {
 		wsjson.Write(wsCtx, conn, msg)
 		return true
 	})
+}
+
+// ==========================================================================
+// Auth middleware + token injection
+// ==========================================================================
+
+func (h *Hub) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.authToken == "" {
+			// No token configured — allow all
+			next(w, r)
+			return
+		}
+		if r.URL.Query().Get("auth") != h.authToken {
+			http.Error(w, `{"error":"invalid or missing token"}`, http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (h *Hub) serveIndexWithToken(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFiles.ReadFile("static/index.html")
+	if err != nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	// Replace placeholder with actual token
+	html := strings.Replace(string(data), "__AUTH_TOKEN__", h.authToken, -1)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Write([]byte(html))
 }
 
 // ==========================================================================

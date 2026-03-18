@@ -14,6 +14,6 @@ output "property_url" {
   value = "https://${var.property_hostname}"
 }
 
-# output "ds2_stream_id" {
-#   value = akamai_datastream.latency.id
-# }
+output "ds2_stream_id" {
+  value = akamai_datastream.latency.id
+}
