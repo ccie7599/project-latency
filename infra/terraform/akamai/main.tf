@@ -36,6 +36,7 @@ data "akamai_property_rules_template" "latency" {
     value = akamai_cp_code.latency.id
     type  = "number"
   }
+
 }
 
 # Property
