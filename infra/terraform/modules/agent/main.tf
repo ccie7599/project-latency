@@ -6,9 +6,8 @@ variable "label" {
   type = string
 }
 
-variable "nats_url" {
-  type      = string
-  sensitive = true
+variable "nats_seed_routes" {
+  type = string
 }
 
 variable "binary_path" {
@@ -41,7 +40,6 @@ resource "linode_instance" "agent" {
   provisioner "file" {
     source      = var.binary_path
     destination = "/usr/local/bin/latency-agent"
-
     connection {
       type        = "ssh"
       host        = self.ip_address
@@ -57,16 +55,14 @@ resource "linode_instance" "agent" {
       "[Unit]",
       "Description=Linode Latency Probe Agent",
       "After=network.target",
-      "",
       "[Service]",
       "Type=simple",
       "ExecStart=/usr/local/bin/latency-agent",
       "Restart=always",
       "RestartSec=5",
       "Environment=REGION=${var.region}",
-      "Environment=NATS_URL=${var.nats_url}",
+      "Environment=NATS_SEED_ROUTES=${var.nats_seed_routes}",
       "Environment=LISTEN_ADDR=:8080",
-      "",
       "[Install]",
       "WantedBy=multi-user.target",
       "UNIT",
@@ -92,6 +88,24 @@ resource "linode_firewall" "agent" {
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "8080"
+    ipv4     = ["0.0.0.0/0"]
+    ipv6     = ["::/0"]
+  }
+
+  inbound {
+    label    = "nats-cluster"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "6222"
+    ipv4     = ["0.0.0.0/0"]
+    ipv6     = ["::/0"]
+  }
+
+  inbound {
+    label    = "nats-monitor"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "8222"
     ipv4     = ["0.0.0.0/0"]
     ipv6     = ["::/0"]
   }

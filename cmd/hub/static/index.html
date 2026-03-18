@@ -1,402 +1,460 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Linode Global Latency Map</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LINODE GLOBAL NETWORK MONITOR</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
 
-        body {
-            background: #0a0e1a;
-            color: #e0e6ed;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            overflow: hidden;
-            height: 100vh;
-        }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-        #globe-container {
-            width: 100vw;
-            height: 100vh;
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
+:root {
+    --green: #00ff41;
+    --green-mid: #00cc33;
+    --green-dim: #006b1f;
+    --green-dark: #002a0a;
+    --amber: #ffb000;
+    --red: #ff3333;
+    --bg: #000000;
+    --panel-bg: rgba(0, 20, 5, 0.85);
+    --border: rgba(0, 255, 65, 0.25);
+}
 
-        .panel {
-            position: absolute;
-            background: rgba(10, 14, 26, 0.92);
-            border: 1px solid rgba(0, 200, 150, 0.2);
-            border-radius: 8px;
-            padding: 16px;
-            backdrop-filter: blur(10px);
-            z-index: 10;
-        }
+body {
+    background: var(--bg);
+    color: var(--green);
+    font-family: 'Share Tech Mono', 'Courier New', monospace;
+    overflow: hidden;
+    height: 100vh;
+    cursor: crosshair;
+}
 
-        .panel h2 {
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: #00c896;
-            margin-bottom: 12px;
-            font-weight: 600;
-        }
+/* CRT scanline overlay */
+body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    pointer-events: none;
+    z-index: 100;
+}
 
-        /* Top-left: title + stats */
-        #info-panel {
-            top: 20px;
-            left: 20px;
-            min-width: 280px;
-        }
+/* Vignette */
+body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.6) 100%);
+    pointer-events: none;
+    z-index: 99;
+}
 
-        #info-panel h1 {
-            font-size: 18px;
-            font-weight: 700;
-            color: #fff;
-            margin-bottom: 4px;
-        }
+#map-container {
+    width: 100vw;
+    height: 100vh;
+    position: absolute;
+    top: 0; left: 0;
+}
 
-        #info-panel .subtitle {
-            font-size: 11px;
-            color: #6b7a8d;
-            margin-bottom: 16px;
-        }
+#map-container svg {
+    width: 100%;
+    height: 100%;
+}
 
-        .stat-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 4px 0;
-            font-size: 12px;
-        }
+.land { fill: none; stroke: var(--green-dark); stroke-width: 0.5; }
+.boundary { fill: none; stroke: var(--green-dark); stroke-width: 0.3; }
+.graticule { fill: none; stroke: rgba(0, 255, 65, 0.06); stroke-width: 0.3; }
 
-        .stat-label { color: #6b7a8d; }
-        .stat-value { color: #e0e6ed; font-weight: 600; }
+.region-dot {
+    fill: var(--green);
+    filter: url(#glow);
+    cursor: pointer;
+}
+.region-dot:hover { fill: #ffffff; }
+.region-dot.selected { fill: #ffffff; r: 5; }
 
-        /* Top-right: controls */
-        #controls-panel {
-            top: 20px;
-            right: 20px;
-            min-width: 260px;
-        }
+.latency-arc {
+    fill: none;
+    stroke-linecap: round;
+}
 
-        .mode-btn {
-            display: block;
-            width: 100%;
-            padding: 8px 12px;
-            margin-bottom: 6px;
-            background: rgba(0, 200, 150, 0.08);
-            border: 1px solid rgba(0, 200, 150, 0.2);
-            border-radius: 4px;
-            color: #e0e6ed;
-            font-size: 12px;
-            font-family: inherit;
-            cursor: pointer;
-            text-align: left;
-            transition: all 0.2s;
-        }
+/* Header bar */
+#header {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 48px;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    z-index: 10;
+    font-size: 13px;
+}
 
-        .mode-btn:hover {
-            background: rgba(0, 200, 150, 0.15);
-            border-color: rgba(0, 200, 150, 0.4);
-        }
+#header .title {
+    font-size: 16px;
+    letter-spacing: 3px;
+    text-shadow: 0 0 10px var(--green), 0 0 20px var(--green-dim);
+}
 
-        .mode-btn.active {
-            background: rgba(0, 200, 150, 0.2);
-            border-color: #00c896;
-            color: #00c896;
-        }
+#header .live-indicator {
+    color: var(--green);
+    animation: blink 1.5s infinite;
+}
 
-        /* Bottom-left: selected region detail */
-        #detail-panel {
-            bottom: 20px;
-            left: 20px;
-            min-width: 320px;
-            max-height: 300px;
-            overflow-y: auto;
-            display: none;
-        }
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
 
-        .latency-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 4px 0;
-            font-size: 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
-        }
+#header .stats {
+    display: flex;
+    gap: 24px;
+    font-size: 12px;
+}
 
-        .latency-bar {
-            height: 4px;
-            border-radius: 2px;
-            margin-left: 8px;
-            flex-shrink: 0;
-        }
+#header .stats span { color: var(--green-mid); }
+#header .stats b { color: var(--green); }
 
-        .lat-green { background: #00c896; }
-        .lat-yellow { background: #f0c040; }
-        .lat-red { background: #f04040; }
+/* Control panel (right side) */
+#controls {
+    position: absolute;
+    top: 60px;
+    right: 12px;
+    width: 240px;
+    z-index: 10;
+}
 
-        /* Bottom-right: AZ pair / region finder */
-        #tool-panel {
-            bottom: 20px;
-            right: 20px;
-            min-width: 300px;
-            max-width: 380px;
-            display: none;
-        }
+.panel {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+    padding: 10px;
+}
 
-        select, input[type="text"] {
-            width: 100%;
-            padding: 6px 10px;
-            margin-bottom: 8px;
-            background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(0,200,150,0.2);
-            border-radius: 4px;
-            color: #e0e6ed;
-            font-size: 12px;
-            font-family: inherit;
-        }
+.panel h3 {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--green-mid);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
 
-        .az-result {
-            padding: 8px;
-            margin-top: 6px;
-            border-radius: 4px;
-            font-size: 11px;
-            line-height: 1.5;
-        }
+.mode-btn {
+    display: block;
+    width: 100%;
+    padding: 6px 10px;
+    margin-bottom: 4px;
+    background: transparent;
+    border: 1px solid var(--green-dark);
+    color: var(--green-dim);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+}
 
-        .az-sync { background: rgba(0, 200, 150, 0.1); border-left: 3px solid #00c896; }
-        .az-async { background: rgba(240, 192, 64, 0.1); border-left: 3px solid #f0c040; }
-        .az-dr { background: rgba(240, 64, 64, 0.1); border-left: 3px solid #f04040; }
+.mode-btn:hover { border-color: var(--green-mid); color: var(--green-mid); }
+.mode-btn.active {
+    border-color: var(--green);
+    color: var(--green);
+    background: rgba(0, 255, 65, 0.05);
+    text-shadow: 0 0 8px var(--green-dim);
+}
 
-        /* Heatmap overlay */
-        #heatmap-panel {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(10, 14, 26, 0.96);
-            border: 1px solid rgba(0, 200, 150, 0.2);
-            border-radius: 8px;
-            padding: 20px;
-            z-index: 20;
-            display: none;
-            overflow: auto;
-            max-width: 95vw;
-            max-height: 90vh;
-        }
+/* Detail panel (left side) */
+#detail {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    width: 320px;
+    max-height: 45vh;
+    overflow-y: auto;
+    z-index: 10;
+    display: none;
+}
 
-        #heatmap-panel canvas {
-            cursor: crosshair;
-        }
+.latency-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 11px;
+    border-bottom: 1px solid rgba(0,255,65,0.05);
+}
 
-        #heatmap-close {
-            position: absolute;
-            top: 8px;
-            right: 12px;
-            background: none;
-            border: none;
-            color: #6b7a8d;
-            font-size: 18px;
-            cursor: pointer;
-        }
+.latency-row .target { color: var(--green-mid); }
+.latency-row .rtt { font-weight: bold; }
 
-        /* Client latency overlay */
-        #client-panel {
-            position: absolute;
-            top: 70px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(10, 14, 26, 0.92);
-            border: 1px solid rgba(0, 200, 150, 0.3);
-            border-radius: 8px;
-            padding: 12px 20px;
-            z-index: 15;
-            display: none;
-            font-size: 12px;
-            text-align: center;
-        }
+.rtt-low { color: var(--green); }
+.rtt-mid { color: var(--amber); }
+.rtt-high { color: var(--red); }
 
-        .spinner {
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            border: 2px solid rgba(0,200,150,0.3);
-            border-top-color: #00c896;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            vertical-align: middle;
-            margin-right: 6px;
-        }
+/* Tool panel (right bottom) */
+#tool-panel {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    width: 300px;
+    z-index: 10;
+    display: none;
+}
 
-        @keyframes spin { to { transform: rotate(360deg); } }
+select, input[type="text"] {
+    width: 100%;
+    padding: 5px 8px;
+    margin-bottom: 6px;
+    background: rgba(0, 255, 65, 0.05);
+    border: 1px solid var(--green-dark);
+    color: var(--green);
+    font: inherit;
+    font-size: 12px;
+}
+select option { background: #001a00; }
 
-        /* Legend */
-        #legend {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 16px;
-            font-size: 11px;
-            z-index: 10;
-            background: rgba(10,14,26,0.8);
-            padding: 6px 16px;
-            border-radius: 20px;
-            border: 1px solid rgba(255,255,255,0.06);
-        }
+.az-result {
+    padding: 6px 8px;
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.5;
+    border-left: 2px solid var(--green-dim);
+}
+.az-sync { border-left-color: var(--green); }
+.az-async { border-left-color: var(--amber); }
+.az-dr { border-left-color: var(--red); }
 
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
+/* Heatmap overlay */
+#heatmap-overlay {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 5, 0, 0.96);
+    border: 1px solid var(--border);
+    padding: 16px;
+    z-index: 20;
+    display: none;
+    overflow: auto;
+    max-width: 95vw;
+    max-height: 90vh;
+}
+#heatmap-overlay canvas { cursor: crosshair; }
+#heatmap-close {
+    position: absolute; top: 4px; right: 10px;
+    background: none; border: none;
+    color: var(--green-dim); font-size: 18px; cursor: pointer;
+}
 
-        .legend-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-        }
-    </style>
+/* Legend */
+#legend {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 20px;
+    font-size: 10px;
+    letter-spacing: 1px;
+    z-index: 10;
+    color: var(--green-dim);
+}
+.legend-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--green-dark); }
+</style>
 </head>
 <body>
 
-<div id="globe-container"></div>
+<div id="map-container"></div>
 
-<!-- Info panel (top-left) -->
-<div class="panel" id="info-panel">
-    <h1>Linode Latency Map</h1>
-    <div class="subtitle">Real-time inter-region latency via NATS</div>
-    <div class="stat-row">
-        <span class="stat-label">Regions</span>
-        <span class="stat-value" id="stat-regions">0</span>
-    </div>
-    <div class="stat-row">
-        <span class="stat-label">Pairs measured</span>
-        <span class="stat-value" id="stat-pairs">0</span>
-    </div>
-    <div class="stat-row">
-        <span class="stat-label">Avg latency</span>
-        <span class="stat-value" id="stat-avg">--</span>
-    </div>
-    <div class="stat-row">
-        <span class="stat-label">Last sweep</span>
-        <span class="stat-value" id="stat-sweep">--</span>
+<div id="header">
+    <span class="title">LINODE GLOBAL NETWORK MONITOR</span>
+    <div class="stats">
+        <span>NODES <b id="stat-nodes">0</b></span>
+        <span>ROUTES <b id="stat-routes">0</b></span>
+        <span>AVG RTT <b id="stat-avg">--</b></span>
+        <span>SCRAPE <b id="stat-scrape">--</b></span>
+        <span class="live-indicator">&#x2588; LIVE</span>
     </div>
 </div>
 
-<!-- Controls panel (top-right) -->
-<div class="panel" id="controls-panel">
-    <h2>View</h2>
-    <button class="mode-btn active" data-mode="globe" onclick="setMode('globe')">Globe — All Arcs</button>
-    <button class="mode-btn" data-mode="heatmap" onclick="setMode('heatmap')">Heatmap Matrix</button>
-    <button class="mode-btn" data-mode="client" onclick="setMode('client')">Client Latency</button>
-    <h2 style="margin-top: 12px;">Tools</h2>
-    <button class="mode-btn" data-mode="az" onclick="setMode('az')">AZ Pair Selector</button>
-    <button class="mode-btn" data-mode="finder" onclick="setMode('finder')">Region Finder</button>
+<div id="controls">
+    <div class="panel">
+        <h3>View</h3>
+        <button class="mode-btn active" data-mode="map" onclick="setMode('map')">MAP — ALL ROUTES</button>
+        <button class="mode-btn" data-mode="heatmap" onclick="setMode('heatmap')">HEATMAP MATRIX</button>
+        <button class="mode-btn" data-mode="client" onclick="setMode('client')">CLIENT LATENCY</button>
+    </div>
+    <div class="panel">
+        <h3>Tools</h3>
+        <button class="mode-btn" data-mode="az" onclick="setMode('az')">AZ PAIR SELECTOR</button>
+        <button class="mode-btn" data-mode="finder" onclick="setMode('finder')">REGION FINDER</button>
+    </div>
 </div>
 
-<!-- Detail panel (bottom-left) -->
-<div class="panel" id="detail-panel">
-    <h2 id="detail-title">Region Detail</h2>
+<div class="panel" id="detail">
+    <h3 id="detail-title">REGION DETAIL</h3>
     <div id="detail-content"></div>
 </div>
 
-<!-- Tool panel (bottom-right) -->
 <div class="panel" id="tool-panel">
-    <h2 id="tool-title">Tool</h2>
+    <h3 id="tool-title">TOOL</h3>
     <div id="tool-content"></div>
 </div>
 
-<!-- Heatmap overlay -->
-<div id="heatmap-panel">
-    <button id="heatmap-close" onclick="setMode('globe')">&times;</button>
-    <h2 style="font-size:13px; color:#00c896; margin-bottom:12px; letter-spacing:1.5px; text-transform:uppercase;">Latency Matrix (ms)</h2>
+<div id="heatmap-overlay">
+    <button id="heatmap-close" onclick="setMode('map')">&times;</button>
+    <h3 style="color:var(--green-mid);letter-spacing:2px;margin-bottom:10px;">LATENCY MATRIX (MS)</h3>
     <canvas id="heatmap-canvas"></canvas>
 </div>
 
-<!-- Client latency banner -->
-<div id="client-panel">
-    <span class="spinner"></span>
-    Measuring client latency to <span id="client-count">0</span> regions...
-</div>
-
-<!-- Legend -->
 <div id="legend">
-    <div class="legend-item"><div class="legend-dot" style="background:#00c896"></div> &lt;50ms</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#f0c040"></div> 50-150ms</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#f04040"></div> &gt;150ms</div>
+    <span><span class="legend-dot" style="background:var(--green)"></span> &lt;50MS</span>
+    <span><span class="legend-dot" style="background:var(--amber)"></span> 50-150MS</span>
+    <span><span class="legend-dot" style="background:var(--red)"></span> &gt;150MS</span>
 </div>
 
-<script src="https://unpkg.com/globe.gl@2.31.0/dist/globe.gl.min.js"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
 // ============================================================
 // State
 // ============================================================
 let allRegions = [];
 let latencyResults = [];
-let clientLatencies = [];
 let selectedRegion = null;
-let currentMode = 'globe';
-let globe = null;
-let ws = null;
+let currentMode = 'map';
+let svg, g, projection, pathGen, zoom;
 
 // ============================================================
-// Globe initialization
+// Color helpers
 // ============================================================
-function initGlobe() {
-    globe = Globe()
-        .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
-        .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
-        .backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
-        .atmosphereColor('#00c896')
-        .atmosphereAltitude(0.15)
-        .pointsData([])
-        .pointLat('lat')
-        .pointLng('lon')
-        .pointColor('color')
-        .pointAltitude(0.01)
-        .pointRadius('radius')
-        .pointLabel('label')
-        .onPointClick(onRegionClick)
-        .arcsData([])
-        .arcStartLat('startLat')
-        .arcStartLng('startLng')
-        .arcEndLat('endLat')
-        .arcEndLng('endLng')
-        .arcColor('color')
-        .arcAltitude('alt')
-        .arcStroke('stroke')
-        .arcDashLength(0.5)
-        .arcDashGap(0.2)
-        .arcDashAnimateTime(2000)
-        .arcLabel('label')
-        .width(window.innerWidth)
-        .height(window.innerHeight)
-        (document.getElementById('globe-container'));
+function rttColor(ms) {
+    if (ms < 50) return getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+    if (ms < 150) return getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
+    return getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+}
+function rttOpacity(ms) {
+    // Brighter = lower latency (faster connections are more prominent)
+    if (ms < 20) return 0.7;
+    if (ms < 50) return 0.5;
+    if (ms < 100) return 0.35;
+    if (ms < 200) return 0.2;
+    return 0.1;
+}
+function rttClass(ms) {
+    if (ms < 50) return 'rtt-low';
+    if (ms < 150) return 'rtt-mid';
+    return 'rtt-high';
+}
 
-    // Auto-rotate
-    globe.controls().autoRotate = true;
-    globe.controls().autoRotateSpeed = 0.4;
-    globe.controls().enableDamping = true;
+// ============================================================
+// Map initialization
+// ============================================================
+async function initMap() {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
 
-    // Initial camera position
-    globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });
+    projection = d3.geoNaturalEarth1()
+        .scale(width / 5.5)
+        .translate([width / 2, height / 2]);
+
+    pathGen = d3.geoPath().projection(projection);
+
+    svg = d3.select('#map-container')
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+    // Glow filter
+    const defs = svg.append('defs');
+    const filter = defs.append('filter').attr('id', 'glow');
+    filter.append('feGaussianBlur').attr('stdDeviation', '2').attr('result', 'blur');
+    const merge = filter.append('feMerge');
+    merge.append('feMergeNode').attr('in', 'blur');
+    merge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+    // Arc glow filter
+    const arcFilter = defs.append('filter').attr('id', 'arcglow');
+    arcFilter.append('feGaussianBlur').attr('stdDeviation', '1.5').attr('result', 'blur');
+    const arcMerge = arcFilter.append('feMerge');
+    arcMerge.append('feMergeNode').attr('in', 'blur');
+    arcMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+    g = svg.append('g');
+
+    // Zoom behavior
+    zoom = d3.zoom()
+        .scaleExtent([1, 12])
+        .on('zoom', (event) => {
+            g.attr('transform', event.transform);
+        });
+    svg.call(zoom);
+
+    // Load world topology
+    const world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+    const land = topojson.feature(world, world.objects.countries);
+    const borders = topojson.mesh(world, world.objects.countries, (a, b) => a !== b);
+
+    // Graticule (grid lines)
+    const graticule = d3.geoGraticule().step([30, 30]);
+    g.append('path')
+        .datum(graticule())
+        .attr('class', 'graticule')
+        .attr('d', pathGen);
+
+    // Land masses
+    g.selectAll('.land')
+        .data(land.features)
+        .join('path')
+        .attr('class', 'land')
+        .attr('d', pathGen);
+
+    // Borders
+    g.append('path')
+        .datum(borders)
+        .attr('class', 'boundary')
+        .attr('d', pathGen);
+
+    // Layer groups
+    g.append('g').attr('id', 'arcs-layer');
+    g.append('g').attr('id', 'dots-layer');
+    g.append('g').attr('id', 'labels-layer');
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+        const w = window.innerWidth, h = window.innerHeight;
+        svg.attr('width', w).attr('height', h);
+        projection.scale(w / 5.5).translate([w / 2, h / 2]);
+        redrawMap();
+    });
 }
 
 // ============================================================
 // Data loading
 // ============================================================
 async function loadRegions() {
-    try {
-        const resp = await fetch('/api/v1/regions');
-        allRegions = await resp.json();
-        document.getElementById('stat-regions').textContent = allRegions.length;
-        updateGlobePoints();
-    } catch (e) {
-        console.error('Failed to load regions:', e);
-    }
+    const resp = await fetch('/api/v1/regions');
+    allRegions = await resp.json();
+    document.getElementById('stat-nodes').textContent = allRegions.length;
+    drawDots();
 }
 
 async function loadMatrix() {
@@ -404,118 +462,145 @@ async function loadMatrix() {
         const resp = await fetch('/api/v1/matrix');
         const data = await resp.json();
         latencyResults = data.results || [];
-        document.getElementById('stat-pairs').textContent = latencyResults.length;
         updateStats();
-        updateGlobeArcs();
+        drawArcs();
     } catch (e) {
-        console.error('Failed to load matrix:', e);
+        console.error('matrix fetch:', e);
     }
 }
 
 function updateStats() {
-    if (latencyResults.length === 0) return;
-    const sum = latencyResults.reduce((s, r) => s + r.rtt_ms, 0);
-    const avg = sum / latencyResults.length;
-    document.getElementById('stat-avg').textContent = avg.toFixed(1) + ' ms';
-
-    const newest = latencyResults.reduce((a, b) =>
-        new Date(a.timestamp) > new Date(b.timestamp) ? a : b
-    );
-    const ago = Math.round((Date.now() - new Date(newest.timestamp).getTime()) / 1000);
-    document.getElementById('stat-sweep').textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago/60)}m ago`;
+    const n = latencyResults.length;
+    document.getElementById('stat-routes').textContent = n;
+    if (n > 0) {
+        const avg = latencyResults.reduce((s, r) => s + r.rtt_ms, 0) / n;
+        document.getElementById('stat-avg').textContent = avg.toFixed(1) + 'MS';
+    }
+    document.getElementById('stat-scrape').textContent = new Date().toLocaleTimeString();
 }
 
 // ============================================================
-// Globe rendering
+// Map drawing
 // ============================================================
-function latencyColor(ms) {
-    if (ms < 50) return '#00c896';
-    if (ms < 150) return '#f0c040';
-    return '#f04040';
+function drawDots() {
+    const regionMap = {};
+    allRegions.forEach(r => regionMap[r.id] = r);
+
+    const dots = d3.select('#dots-layer')
+        .selectAll('.region-dot')
+        .data(allRegions, d => d.id);
+
+    dots.enter()
+        .append('circle')
+        .attr('class', 'region-dot')
+        .attr('r', 3)
+        .attr('cx', d => projection([d.lon, d.lat])[0])
+        .attr('cy', d => projection([d.lon, d.lat])[1])
+        .on('click', (event, d) => onRegionClick(d))
+        .append('title')
+        .text(d => `${d.label} (${d.id})`);
+
+    dots
+        .attr('cx', d => projection([d.lon, d.lat])[0])
+        .attr('cy', d => projection([d.lon, d.lat])[1]);
+
+    // Region labels (visible at zoom)
+    const labels = d3.select('#labels-layer')
+        .selectAll('.region-label')
+        .data(allRegions, d => d.id);
+
+    labels.enter()
+        .append('text')
+        .attr('class', 'region-label')
+        .attr('x', d => projection([d.lon, d.lat])[0] + 6)
+        .attr('y', d => projection([d.lon, d.lat])[1] + 3)
+        .attr('fill', 'var(--green-dim)')
+        .attr('font-size', '7px')
+        .text(d => d.short);
+
+    labels
+        .attr('x', d => projection([d.lon, d.lat])[0] + 6)
+        .attr('y', d => projection([d.lon, d.lat])[1] + 3);
 }
 
-function latencyColorRGBA(ms, alpha) {
-    if (ms < 50) return `rgba(0, 200, 150, ${alpha})`;
-    if (ms < 150) return `rgba(240, 192, 64, ${alpha})`;
-    return `rgba(240, 64, 64, ${alpha})`;
-}
-
-function updateGlobePoints() {
-    const points = allRegions.map(r => ({
-        lat: r.lat,
-        lon: r.lon,
-        color: selectedRegion === r.id ? '#ffffff' : '#00c896',
-        radius: selectedRegion === r.id ? 0.5 : 0.3,
-        label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid rgba(0,200,150,0.3);font-size:12px;font-family:monospace;">
-            <b>${r.label}</b><br/>
-            <span style="color:#6b7a8d">${r.id}</span>
-        </div>`,
-        id: r.id
-    }));
-    globe.pointsData(points);
-}
-
-function updateGlobeArcs() {
-    if (currentMode !== 'globe' && currentMode !== 'client') return;
+function drawArcs() {
+    if (currentMode !== 'map') return;
 
     const regionMap = {};
     allRegions.forEach(r => regionMap[r.id] = r);
 
-    let dataToShow = latencyResults;
-    if (currentMode === 'client') {
-        dataToShow = clientLatencies;
+    let data = latencyResults;
+    if (selectedRegion) {
+        data = data.filter(r => r.source === selectedRegion || r.target === selectedRegion);
     }
 
-    // If a region is selected, only show arcs from that region
-    if (selectedRegion && currentMode === 'globe') {
-        dataToShow = dataToShow.filter(r => r.source === selectedRegion || r.target === selectedRegion);
-    }
-
-    const arcs = dataToShow
-        .filter(r => regionMap[r.source] && regionMap[r.target])
-        .map(r => {
-            const src = regionMap[r.source];
-            const tgt = regionMap[r.target];
-            const ms = r.rtt_ms || r.p50_ms;
-            return {
-                startLat: src.lat,
-                startLng: src.lon,
-                endLat: tgt.lat,
-                endLng: tgt.lon,
-                color: [latencyColorRGBA(ms, 0.8), latencyColorRGBA(ms, 0.3)],
-                alt: Math.min(ms / 500, 0.4),
-                stroke: selectedRegion ? 1.0 : 0.4,
-                label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid rgba(0,200,150,0.3);font-size:12px;font-family:monospace;">
-                    <b>${src.label} ↔ ${tgt.label}</b><br/>
-                    RTT: <span style="color:${latencyColor(ms)}">${ms.toFixed(1)} ms</span>
-                </div>`
-            };
+    // Deduplicate: only keep one direction per pair (lower source ID)
+    if (!selectedRegion) {
+        const seen = new Set();
+        data = data.filter(r => {
+            const key = [r.source, r.target].sort().join(':');
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
         });
+    }
 
-    globe.arcsData(arcs);
+    const arcs = d3.select('#arcs-layer')
+        .selectAll('.latency-arc')
+        .data(data.filter(r => regionMap[r.source] && regionMap[r.target]), d => d.source + ':' + d.target);
+
+    arcs.exit().remove();
+
+    const arcEnter = arcs.enter()
+        .append('path')
+        .attr('class', 'latency-arc')
+        .attr('filter', 'url(#arcglow)');
+
+    arcs.merge(arcEnter)
+        .attr('d', d => {
+            const src = regionMap[d.source];
+            const tgt = regionMap[d.target];
+            const s = projection([src.lon, src.lat]);
+            const t = projection([tgt.lon, tgt.lat]);
+            const dx = t[0] - s[0], dy = t[1] - s[1];
+            const dr = Math.sqrt(dx * dx + dy * dy) * 1.5;
+            return `M${s[0]},${s[1]}A${dr},${dr} 0 0,1 ${t[0]},${t[1]}`;
+        })
+        .attr('stroke', d => rttColor(d.rtt_ms))
+        .attr('stroke-opacity', d => selectedRegion ? rttOpacity(d.rtt_ms) * 2 : rttOpacity(d.rtt_ms))
+        .attr('stroke-width', d => selectedRegion ? 1.2 : 0.5);
+
+    // Update dot highlighting
+    d3.selectAll('.region-dot')
+        .classed('selected', d => d.id === selectedRegion)
+        .attr('r', d => d.id === selectedRegion ? 5 : 3);
+}
+
+function redrawMap() {
+    drawDots();
+    drawArcs();
 }
 
 // ============================================================
-// Region click handler
+// Interactions
 // ============================================================
-function onRegionClick(point) {
-    if (selectedRegion === point.id) {
+function onRegionClick(region) {
+    if (selectedRegion === region.id) {
         selectedRegion = null;
-        document.getElementById('detail-panel').style.display = 'none';
+        document.getElementById('detail').style.display = 'none';
     } else {
-        selectedRegion = point.id;
-        showRegionDetail(point.id);
+        selectedRegion = region.id;
+        showRegionDetail(region.id);
     }
-    updateGlobePoints();
-    updateGlobeArcs();
+    drawArcs();
 }
 
 function showRegionDetail(regionId) {
-    const panel = document.getElementById('detail-panel');
+    const panel = document.getElementById('detail');
     const region = allRegions.find(r => r.id === regionId);
     if (!region) return;
 
-    document.getElementById('detail-title').textContent = region.label;
+    document.getElementById('detail-title').textContent = `${region.label.toUpperCase()} [${region.id}]`;
 
     const fromRegion = latencyResults.filter(r => r.source === regionId);
     fromRegion.sort((a, b) => a.rtt_ms - b.rtt_ms);
@@ -527,22 +612,13 @@ function showRegionDetail(regionId) {
     fromRegion.forEach(r => {
         const tgt = regionMap[r.target];
         if (!tgt) return;
-        const ms = r.rtt_ms;
-        const barWidth = Math.min(ms / 3, 100);
-        const colorClass = ms < 50 ? 'lat-green' : ms < 150 ? 'lat-yellow' : 'lat-red';
         html += `<div class="latency-row">
-            <span>${tgt.label}</span>
-            <span style="display:flex;align-items:center;">
-                <span style="color:${latencyColor(ms)}">${ms.toFixed(1)} ms</span>
-                <div class="latency-bar ${colorClass}" style="width:${barWidth}px"></div>
-            </span>
+            <span class="target">${tgt.short.toUpperCase()}</span>
+            <span class="rtt ${rttClass(r.rtt_ms)}">${r.rtt_ms.toFixed(1)}MS</span>
         </div>`;
     });
 
-    if (html === '') {
-        html = '<div style="color:#6b7a8d;font-size:12px;">No measurements yet. Waiting for next sweep...</div>';
-    }
-
+    if (!html) html = '<div style="color:var(--green-dim);font-size:11px;">AWAITING DATA...</div>';
     document.getElementById('detail-content').innerHTML = html;
     panel.style.display = 'block';
 }
@@ -556,17 +632,14 @@ function setMode(mode) {
         b.classList.toggle('active', b.dataset.mode === mode);
     });
 
-    // Hide all overlays
-    document.getElementById('heatmap-panel').style.display = 'none';
-    document.getElementById('client-panel').style.display = 'none';
+    document.getElementById('heatmap-overlay').style.display = 'none';
     document.getElementById('tool-panel').style.display = 'none';
 
     switch (mode) {
-        case 'globe':
+        case 'map':
             selectedRegion = null;
-            document.getElementById('detail-panel').style.display = 'none';
-            updateGlobePoints();
-            updateGlobeArcs();
+            document.getElementById('detail').style.display = 'none';
+            drawArcs();
             break;
         case 'heatmap':
             showHeatmap();
@@ -587,103 +660,79 @@ function setMode(mode) {
 // Heatmap
 // ============================================================
 function showHeatmap() {
-    const panel = document.getElementById('heatmap-panel');
+    const panel = document.getElementById('heatmap-overlay');
     panel.style.display = 'block';
-
     const canvas = document.getElementById('heatmap-canvas');
     const ctx = canvas.getContext('2d');
 
-    // Get unique regions that have data
     const regionSet = new Set();
-    latencyResults.forEach(r => {
-        regionSet.add(r.source);
-        regionSet.add(r.target);
-    });
+    latencyResults.forEach(r => { regionSet.add(r.source); regionSet.add(r.target); });
     const regionIds = Array.from(regionSet).sort();
     const n = regionIds.length;
+    if (n === 0) return;
 
-    if (n === 0) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#6b7a8d';
-        ctx.fillText('No data yet', 20, 30);
-        return;
-    }
+    const cellSize = Math.max(10, Math.min(16, Math.floor(650 / n)));
+    const labelW = 70, labelH = 70;
+    canvas.width = labelW + n * cellSize;
+    canvas.height = labelH + n * cellSize;
 
-    const cellSize = Math.max(12, Math.min(18, Math.floor(700 / n)));
-    const labelWidth = 80;
-    const labelHeight = 80;
-
-    canvas.width = labelWidth + n * cellSize;
-    canvas.height = labelHeight + n * cellSize;
-
-    // Build lookup
     const lookup = {};
-    latencyResults.forEach(r => {
-        lookup[r.source + ':' + r.target] = r.rtt_ms;
-    });
+    latencyResults.forEach(r => { lookup[r.source + ':' + r.target] = r.rtt_ms; });
 
-    // Draw labels
-    ctx.fillStyle = '#6b7a8d';
-    ctx.font = `${Math.min(10, cellSize - 2)}px monospace`;
+    ctx.fillStyle = '#00ff41';
+    ctx.font = `${Math.min(9, cellSize - 1)}px 'Share Tech Mono', monospace`;
     ctx.textAlign = 'right';
     regionIds.forEach((id, i) => {
-        const short = allRegions.find(r => r.id === id)?.short || id.slice(0, 6);
-        ctx.fillText(short, labelWidth - 4, labelHeight + i * cellSize + cellSize / 2 + 3);
+        const short = allRegions.find(r => r.id === id)?.short || id.slice(0, 5);
+        ctx.fillStyle = '#006b1f';
+        ctx.fillText(short.toUpperCase(), labelW - 3, labelH + i * cellSize + cellSize / 2 + 3);
     });
 
     ctx.save();
     ctx.textAlign = 'left';
     regionIds.forEach((id, i) => {
-        const short = allRegions.find(r => r.id === id)?.short || id.slice(0, 6);
+        const short = allRegions.find(r => r.id === id)?.short || id.slice(0, 5);
         ctx.save();
-        ctx.translate(labelWidth + i * cellSize + cellSize / 2, labelHeight - 4);
+        ctx.translate(labelW + i * cellSize + cellSize / 2, labelH - 3);
         ctx.rotate(-Math.PI / 4);
-        ctx.fillStyle = '#6b7a8d';
-        ctx.fillText(short, 0, 0);
+        ctx.fillStyle = '#006b1f';
+        ctx.fillText(short.toUpperCase(), 0, 0);
         ctx.restore();
     });
     ctx.restore();
 
-    // Draw cells
     regionIds.forEach((src, i) => {
         regionIds.forEach((tgt, j) => {
-            const x = labelWidth + j * cellSize;
-            const y = labelHeight + i * cellSize;
-
+            const x = labelW + j * cellSize;
+            const y = labelH + i * cellSize;
             if (src === tgt) {
-                ctx.fillStyle = '#1a1e2e';
+                ctx.fillStyle = '#001a00';
                 ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
                 return;
             }
-
             const ms = lookup[src + ':' + tgt];
             if (ms === undefined) {
-                ctx.fillStyle = '#1a1e2e';
+                ctx.fillStyle = '#001a00';
             } else if (ms < 50) {
-                const t = ms / 50;
-                ctx.fillStyle = `rgba(0, ${Math.round(200 - t * 50)}, ${Math.round(150 - t * 50)}, 0.8)`;
+                ctx.fillStyle = `rgba(0, 255, 65, ${0.3 + 0.5 * (1 - ms / 50)})`;
             } else if (ms < 150) {
-                const t = (ms - 50) / 100;
-                ctx.fillStyle = `rgba(${Math.round(240)}, ${Math.round(192 - t * 128)}, ${Math.round(64 - t * 24)}, 0.8)`;
+                ctx.fillStyle = `rgba(255, 176, 0, ${0.3 + 0.4 * (1 - (ms - 50) / 100)})`;
             } else {
-                ctx.fillStyle = 'rgba(240, 64, 64, 0.8)';
+                ctx.fillStyle = `rgba(255, 51, 51, ${0.3 + 0.3 * Math.min(1, (ms - 150) / 200)})`;
             }
             ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
         });
     });
 
-    // Hover tooltip
     canvas.onmousemove = (e) => {
         const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const col = Math.floor((mx - labelWidth) / cellSize);
-        const row = Math.floor((my - labelHeight) / cellSize);
+        const col = Math.floor((e.clientX - rect.left - labelW) / cellSize);
+        const row = Math.floor((e.clientY - rect.top - labelH) / cellSize);
         if (col >= 0 && col < n && row >= 0 && row < n) {
-            const src = regionIds[row];
-            const tgt = regionIds[col];
-            const ms = lookup[src + ':' + tgt];
-            canvas.title = ms !== undefined ? `${src} → ${tgt}: ${ms.toFixed(1)} ms` : `${src} → ${tgt}: no data`;
+            const ms = lookup[regionIds[row] + ':' + regionIds[col]];
+            canvas.title = ms !== undefined
+                ? `${regionIds[row]} → ${regionIds[col]}: ${ms.toFixed(1)}ms`
+                : `${regionIds[row]} → ${regionIds[col]}: NO DATA`;
         }
     };
 }
@@ -692,134 +741,47 @@ function showHeatmap() {
 // Client latency measurement
 // ============================================================
 async function measureClientLatency() {
-    const panel = document.getElementById('client-panel');
-    panel.style.display = 'block';
-    document.getElementById('client-count').textContent = allRegions.length;
+    document.getElementById('detail').style.display = 'block';
+    document.getElementById('detail-title').textContent = 'CLIENT LATENCY TEST';
+    document.getElementById('detail-content').innerHTML = '<div style="color:var(--green-dim)">MEASURING...</div>';
 
-    clientLatencies = [];
-
-    // We measure against all agent ping endpoints
-    // In production, these would be probe-{short}.latency.connected-cloud.io
-    // For local dev, we use the hub's /ping endpoint as demo
     const hubOrigin = window.location.origin;
+    const results = [];
 
-    // Measure to each region's ping endpoint
-    const promises = allRegions.map(async (region) => {
-        const url = `${hubOrigin}/ping`; // In production: https://probe-${region.short}.latency.connected-cloud.io/ping
+    for (const region of allRegions) {
+        // In production: each region has its own /ping endpoint
+        const url = `${hubOrigin}/ping`;
         try {
-            // Warmup request
-            await fetch(url, { cache: 'no-store' });
-
-            // Measure 3 samples
+            await fetch(url, { cache: 'no-store' }); // warmup
             const samples = [];
             for (let i = 0; i < 3; i++) {
-                const start = performance.now();
+                const t0 = performance.now();
                 await fetch(url, { cache: 'no-store' });
-                samples.push(performance.now() - start);
+                samples.push(performance.now() - t0);
             }
             samples.sort((a, b) => a - b);
-            const median = samples[Math.floor(samples.length / 2)];
-
-            return {
-                source: 'client',
-                target: region.id,
-                rtt_ms: Math.round(median * 10) / 10,
-                p50_ms: Math.round(median * 10) / 10,
-                timestamp: new Date().toISOString()
-            };
-        } catch (e) {
-            return null;
-        }
-    });
-
-    const results = await Promise.allSettled(promises);
-    clientLatencies = results
-        .filter(r => r.status === 'fulfilled' && r.value)
-        .map(r => r.value);
-
-    panel.style.display = 'none';
-
-    // Add client point to globe
-    if (clientLatencies.length > 0) {
-        // Try to get client location via browser geolocation API
-        try {
-            const pos = await new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+            results.push({
+                source: 'client', target: region.id,
+                rtt_ms: Math.round(samples[1] * 10) / 10
             });
-            const clientPoint = {
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude,
-                color: '#ffffff',
-                radius: 0.6,
-                label: '<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid #fff;font-size:12px;font-family:monospace;"><b>You</b></div>',
-                id: 'client'
-            };
-            const points = allRegions.map(r => ({
-                lat: r.lat,
-                lon: r.lon,
-                color: '#00c896',
-                radius: 0.3,
-                label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${r.label}</b></div>`,
-                id: r.id
-            }));
-            points.push(clientPoint);
-            globe.pointsData(points);
-
-            // Update client arcs to use client position
-            const regionMap = {};
-            allRegions.forEach(r => regionMap[r.id] = r);
-            const arcs = clientLatencies.map(r => {
-                const tgt = regionMap[r.target];
-                if (!tgt) return null;
-                return {
-                    startLat: pos.coords.latitude,
-                    startLng: pos.coords.longitude,
-                    endLat: tgt.lat,
-                    endLng: tgt.lon,
-                    color: [latencyColorRGBA(r.rtt_ms, 0.8), latencyColorRGBA(r.rtt_ms, 0.3)],
-                    alt: Math.min(r.rtt_ms / 500, 0.4),
-                    stroke: 0.8,
-                    label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>You → ${tgt.label}</b><br/>RTT: <span style="color:${latencyColor(r.rtt_ms)}">${r.rtt_ms.toFixed(1)} ms</span></div>`
-                };
-            }).filter(Boolean);
-            globe.arcsData(arcs);
-        } catch (e) {
-            // Geolocation denied, still show results in detail panel
-            updateGlobeArcs();
-        }
-
-        // Show results in detail panel
-        showClientResults();
+        } catch (e) { /* skip */ }
     }
-}
 
-function showClientResults() {
-    const panel = document.getElementById('detail-panel');
-    document.getElementById('detail-title').textContent = 'Client Latency';
+    results.sort((a, b) => a.rtt_ms - b.rtt_ms);
 
     const regionMap = {};
     allRegions.forEach(r => regionMap[r.id] = r);
 
-    clientLatencies.sort((a, b) => a.rtt_ms - b.rtt_ms);
-
     let html = '';
-    clientLatencies.forEach(r => {
+    results.forEach(r => {
         const tgt = regionMap[r.target];
         if (!tgt) return;
-        const ms = r.rtt_ms;
-        const barWidth = Math.min(ms / 3, 100);
-        const colorClass = ms < 50 ? 'lat-green' : ms < 150 ? 'lat-yellow' : 'lat-red';
         html += `<div class="latency-row">
-            <span>${tgt.label}</span>
-            <span style="display:flex;align-items:center;">
-                <span style="color:${latencyColor(ms)}">${ms.toFixed(1)} ms</span>
-                <div class="latency-bar ${colorClass}" style="width:${barWidth}px"></div>
-            </span>
+            <span class="target">${tgt.label.toUpperCase()}</span>
+            <span class="rtt ${rttClass(r.rtt_ms)}">${r.rtt_ms.toFixed(1)}MS</span>
         </div>`;
     });
-
     document.getElementById('detail-content').innerHTML = html;
-    panel.style.display = 'block';
 }
 
 // ============================================================
@@ -828,85 +790,53 @@ function showClientResults() {
 function showAZSelector() {
     const panel = document.getElementById('tool-panel');
     panel.style.display = 'block';
-    document.getElementById('tool-title').textContent = 'AZ Pair Selector';
-
-    let html = `
+    document.getElementById('tool-title').textContent = 'AZ PAIR SELECTOR';
+    document.getElementById('tool-content').innerHTML = `
         <select id="az-primary" onchange="loadAZPairs()">
-            <option value="">Select primary region...</option>
-            ${allRegions.map(r => `<option value="${r.id}">${r.label} (${r.id})</option>`).join('')}
+            <option value="">SELECT PRIMARY REGION...</option>
+            ${allRegions.map(r => `<option value="${r.id}">${r.label.toUpperCase()} (${r.id})</option>`).join('')}
         </select>
-        <div id="az-results"></div>
-    `;
-    document.getElementById('tool-content').innerHTML = html;
+        <div id="az-results"></div>`;
 }
 
 async function loadAZPairs() {
     const primary = document.getElementById('az-primary').value;
     if (!primary) return;
-
     selectedRegion = primary;
-    updateGlobePoints();
+    drawArcs();
 
     try {
         const resp = await fetch(`/api/v1/az-pairs?primary=${primary}`);
         const data = await resp.json();
         const pairs = data.pairs || [];
-
         const regionMap = {};
         allRegions.forEach(r => regionMap[r.id] = r);
 
-        let html = '';
         const categories = {
-            'sync-capable': { label: 'Sync Replication', css: 'az-sync' },
-            'async-low-rpo': { label: 'Async (Low RPO)', css: 'az-async' },
-            'dr-only': { label: 'DR Only', css: 'az-dr' }
+            'sync-capable': { label: 'SYNC REPLICATION', css: 'az-sync' },
+            'async-low-rpo': { label: 'ASYNC (LOW RPO)', css: 'az-async' },
+            'dr-only': { label: 'DR ONLY', css: 'az-dr' }
         };
 
+        let html = '';
         for (const [cat, meta] of Object.entries(categories)) {
             const catPairs = pairs.filter(p => p.category === cat).slice(0, 5);
-            if (catPairs.length === 0) continue;
-
-            html += `<div style="margin-top:10px;font-size:11px;color:#6b7a8d;text-transform:uppercase;letter-spacing:1px;">${meta.label}</div>`;
+            if (!catPairs.length) continue;
+            html += `<div style="margin-top:8px;font-size:10px;color:var(--green-dim);letter-spacing:1px;">${meta.label}</div>`;
             catPairs.forEach(p => {
                 const tgt = regionMap[p.secondary];
-                const coLocWarning = p.co_located ? '<br/><span style="color:#f0c040;">Same metro — limited fault isolation</span>' : '';
+                const warn = p.co_located ? '<br><span style="color:var(--amber)">SAME METRO — LIMITED FAULT ISOLATION</span>' : '';
                 html += `<div class="az-result ${meta.css}">
-                    <b>${tgt ? tgt.label : p.secondary}</b><br/>
-                    RTT: ${p.rtt_ms.toFixed(1)} ms | Distance: ${Math.round(p.distance_km)} km${coLocWarning}<br/>
-                    <span style="color:#6b7a8d">${p.rationale}</span>
+                    <b>${tgt ? tgt.label.toUpperCase() : p.secondary}</b><br>
+                    RTT: ${p.rtt_ms.toFixed(1)}MS | DIST: ${Math.round(p.distance_km)}KM${warn}<br>
+                    <span style="color:var(--green-dim)">${p.rationale}</span>
                 </div>`;
             });
         }
-
-        if (html === '') {
-            html = '<div style="color:#6b7a8d;margin-top:8px;">No latency data yet. Wait for measurements.</div>';
-        }
-
+        if (!html) html = '<div style="color:var(--green-dim);margin-top:6px">NO DATA YET</div>';
         document.getElementById('az-results').innerHTML = html;
-
-        // Show arcs to AZ candidates on globe
-        const arcPairs = pairs.slice(0, 10);
-        const srcRegion = regionMap[primary];
-        if (srcRegion) {
-            const arcs = arcPairs.map(p => {
-                const tgt = regionMap[p.secondary];
-                if (!tgt) return null;
-                return {
-                    startLat: srcRegion.lat,
-                    startLng: srcRegion.lon,
-                    endLat: tgt.lat,
-                    endLng: tgt.lon,
-                    color: [latencyColorRGBA(p.rtt_ms, 0.9), latencyColorRGBA(p.rtt_ms, 0.3)],
-                    alt: 0.15,
-                    stroke: 1.2,
-                    label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${srcRegion.label} ↔ ${tgt.label}</b><br/>RTT: ${p.rtt_ms.toFixed(1)} ms | ${p.category}</div>`
-                };
-            }).filter(Boolean);
-            globe.arcsData(arcs);
-        }
-
     } catch (e) {
-        document.getElementById('az-results').innerHTML = '<div style="color:#f04040;">Failed to load AZ pairs</div>';
+        document.getElementById('az-results').innerHTML = '<div style="color:var(--red)">QUERY FAILED</div>';
     }
 }
 
@@ -916,30 +846,42 @@ async function loadAZPairs() {
 function showRegionFinder() {
     const panel = document.getElementById('tool-panel');
     panel.style.display = 'block';
-    document.getElementById('tool-title').textContent = 'Region Finder';
-
-    let html = `
-        <div style="font-size:11px;color:#6b7a8d;margin-bottom:8px;">Enter coordinates or use browser location</div>
-        <input type="text" id="finder-lat" placeholder="Latitude (e.g., 40.7128)" />
-        <input type="text" id="finder-lon" placeholder="Longitude (e.g., -74.0060)" />
-        <button class="mode-btn" onclick="findNearest()">Find Nearest Regions</button>
-        <button class="mode-btn" onclick="findFromBrowser()">Use My Location</button>
-        <div id="finder-results"></div>
-    `;
-    document.getElementById('tool-content').innerHTML = html;
+    document.getElementById('tool-title').textContent = 'REGION FINDER';
+    document.getElementById('tool-content').innerHTML = `
+        <div style="font-size:10px;color:var(--green-dim);margin-bottom:6px;">ENTER COORDINATES</div>
+        <input type="text" id="finder-lat" placeholder="LATITUDE (e.g., 40.7128)">
+        <input type="text" id="finder-lon" placeholder="LONGITUDE (e.g., -74.0060)">
+        <button class="mode-btn" onclick="findNearest()">FIND NEAREST REGIONS</button>
+        <button class="mode-btn" onclick="findFromBrowser()">USE MY LOCATION</button>
+        <div id="finder-results"></div>`;
 }
 
 async function findNearest() {
     const lat = document.getElementById('finder-lat').value;
     const lon = document.getElementById('finder-lon').value;
     if (!lat || !lon) return;
-
     try {
         const resp = await fetch(`/api/v1/nearest?lat=${lat}&lon=${lon}`);
         const data = await resp.json();
-        showFinderResults(data, parseFloat(lat), parseFloat(lon));
+        const nearest = data.nearest || [];
+        let html = '';
+        nearest.forEach((r, i) => {
+            const css = i === 0 ? 'az-sync' : i < 3 ? 'az-async' : 'az-dr';
+            html += `<div class="az-result ${css}">
+                <b>${i + 1}. ${r.label.toUpperCase()}</b> (${r.id})<br>
+                DISTANCE: ${Math.round(r.distance_km)}KM
+            </div>`;
+        });
+        document.getElementById('finder-results').innerHTML = html;
+
+        // Zoom to location
+        const pt = projection([parseFloat(lon), parseFloat(lat)]);
+        svg.transition().duration(750).call(
+            zoom.transform,
+            d3.zoomIdentity.translate(window.innerWidth / 2, window.innerHeight / 2).scale(4).translate(-pt[0], -pt[1])
+        );
     } catch (e) {
-        document.getElementById('finder-results').innerHTML = '<div style="color:#f04040;">Failed to find regions</div>';
+        document.getElementById('finder-results').innerHTML = '<div style="color:var(--red)">QUERY FAILED</div>';
     }
 }
 
@@ -952,115 +894,46 @@ async function findFromBrowser() {
         document.getElementById('finder-lon').value = pos.coords.longitude.toFixed(4);
         findNearest();
     } catch (e) {
-        document.getElementById('finder-results').innerHTML = '<div style="color:#f04040;">Geolocation denied or unavailable</div>';
+        document.getElementById('finder-results').innerHTML = '<div style="color:var(--red)">GEOLOCATION DENIED</div>';
     }
 }
 
-function showFinderResults(data, lat, lon) {
-    const nearest = data.nearest || [];
-    let html = '';
-    nearest.forEach((r, i) => {
-        const colorClass = i === 0 ? 'az-sync' : i < 3 ? 'az-async' : 'az-dr';
-        html += `<div class="az-result ${colorClass}">
-            <b>${i + 1}. ${r.label}</b> (${r.id})<br/>
-            Distance: ${Math.round(r.distance_km)} km
-        </div>`;
-    });
-    document.getElementById('finder-results').innerHTML = html;
-
-    // Show on globe
-    const points = allRegions.map(r => ({
-        lat: r.lat,
-        lon: r.lon,
-        color: nearest.slice(0, 3).some(n => n.id === r.id) ? '#00c896' : '#3a4a5d',
-        radius: nearest.slice(0, 3).some(n => n.id === r.id) ? 0.5 : 0.2,
-        label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${r.label}</b></div>`,
-        id: r.id
-    }));
-    // Add client point
-    points.push({
-        lat: lat,
-        lon: lon,
-        color: '#ffffff',
-        radius: 0.6,
-        label: '<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;border:1px solid #fff;font-size:12px;font-family:monospace;"><b>Query Location</b></div>',
-        id: 'query'
-    });
-    globe.pointsData(points);
-    globe.pointOfView({ lat: lat, lng: lon, altitude: 2.0 }, 1000);
-
-    // Draw arcs from query to nearest
-    const arcs = nearest.slice(0, 5).map(r => ({
-        startLat: lat,
-        startLng: lon,
-        endLat: r.lat,
-        endLng: r.lon,
-        color: ['rgba(255,255,255,0.8)', 'rgba(0,200,150,0.3)'],
-        alt: 0.1,
-        stroke: 1.0,
-        label: `<div style="background:rgba(10,14,26,0.9);padding:6px 10px;border-radius:4px;font-size:12px;font-family:monospace;"><b>${r.label}</b><br/>Distance: ${Math.round(r.distance_km)} km</div>`
-    }));
-    globe.arcsData(arcs);
-}
-
 // ============================================================
-// WebSocket for live updates
+// WebSocket
 // ============================================================
-function connectWebSocket() {
+function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${proto}//${location.host}/ws/live`);
+    const ws = new WebSocket(`${proto}//${location.host}/ws/live`);
+    let reconnectDelay = 3000;
 
     ws.onmessage = (event) => {
         try {
             const msg = JSON.parse(event.data);
-            if (msg.type === 'snapshot') {
-                latencyResults = msg.results || [];
+            if (msg.results) {
+                latencyResults = msg.results;
                 updateStats();
-                updateGlobeArcs();
-            } else if (msg.source && msg.target) {
-                // Individual result update
-                const idx = latencyResults.findIndex(r => r.source === msg.source && r.target === msg.target);
-                if (idx >= 0) {
-                    latencyResults[idx] = msg;
-                } else {
-                    latencyResults.push(msg);
-                }
-                updateStats();
-                if (currentMode === 'globe') {
-                    updateGlobeArcs();
-                }
+                if (currentMode === 'map') drawArcs();
             }
-        } catch (e) {
-            console.error('WS parse error:', e);
-        }
+        } catch (e) {}
     };
-
+    ws.onopen = () => { reconnectDelay = 3000; };
     ws.onclose = () => {
-        setTimeout(connectWebSocket, 3000);
+        setTimeout(connectWS, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
     };
-
-    ws.onerror = () => {
-        ws.close();
-    };
+    ws.onerror = () => { ws.close(); };
 }
 
 // ============================================================
 // Startup
 // ============================================================
-window.addEventListener('resize', () => {
-    if (globe) {
-        globe.width(window.innerWidth);
-        globe.height(window.innerHeight);
-    }
-});
-
-initGlobe();
-loadRegions();
-loadMatrix();
-connectWebSocket();
-
-// Refresh matrix every 30 seconds
-setInterval(loadMatrix, 30000);
+(async function() {
+    await initMap();
+    await loadRegions();
+    await loadMatrix();
+    connectWS();
+    setInterval(loadMatrix, 30000);
+})();
 </script>
 </body>
 </html>

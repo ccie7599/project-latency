@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -19,7 +21,11 @@ import (
 	"github.com/bapley/project-latency/internal/latency"
 	"github.com/bapley/project-latency/internal/regions"
 	"github.com/nats-io/nats-server/v2/server"
-	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	promapi "github.com/prometheus/client_golang/api"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
@@ -27,37 +33,101 @@ import (
 //go:embed static
 var staticFiles embed.FS
 
+// Prometheus metrics
+var (
+	routeRTT = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "nats_cluster_route_rtt_seconds",
+			Help: "RTT between NATS cluster nodes in seconds",
+		},
+		[]string{"source", "target"},
+	)
+	routeCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "nats_cluster_node_routes",
+			Help: "Number of cluster routes per node",
+		},
+		[]string{"node"},
+	)
+	scrapeErrors = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "latency_scrape_errors_total",
+			Help: "Total number of routez scrape errors",
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(routeRTT, routeCount, scrapeErrors)
+}
+
 type Hub struct {
+	region     string
 	natsServer *server.Server
-	nc         *nats.Conn
-	matrix     *latency.Matrix
-	wsClients  sync.Map // map[*websocket.Conn]context.CancelFunc
+	promAPI    promv1.API
+	wsClients  sync.Map
 	authToken  string
+	httpClient *http.Client
+}
+
+// routezResponse mirrors the NATS /routez JSON response.
+type routezResponse struct {
+	ServerID   string      `json:"server_id"`
+	ServerName string      `json:"server_name"`
+	NumRoutes  int         `json:"num_routes"`
+	Routes     []routeInfo `json:"routes"`
+}
+
+type routeInfo struct {
+	RemoteID   string `json:"remote_id"`
+	RemoteName string `json:"remote_name"`
+	IP         string `json:"ip"`
+	Port       int    `json:"port"`
+	RTT        string `json:"rtt"`
 }
 
 func main() {
-	authToken := os.Getenv("AUTH_TOKEN")
+	hubRegion := os.Getenv("REGION")
+	if hubRegion == "" {
+		hubRegion = "us-ord"
+	}
+	seedRoutes := os.Getenv("NATS_SEED_ROUTES") // empty for hub (it IS the seed)
 	listenAddr := os.Getenv("LISTEN_ADDR")
 	if listenAddr == "" {
 		listenAddr = ":8443"
 	}
-	natsPort := 4222
-	leafPort := 7422
+	metricsAddr := os.Getenv("METRICS_ADDR")
+	if metricsAddr == "" {
+		metricsAddr = ":2112"
+	}
+	promURL := os.Getenv("PROMETHEUS_URL")
+	if promURL == "" {
+		promURL = "http://localhost:9090"
+	}
+	authToken := os.Getenv("AUTH_TOKEN")
 
-	hub := &Hub{
-		matrix:    latency.NewMatrix(96), // 24h at 15-min intervals
-		authToken: authToken,
+	clusterPort := 6222
+	monitorPort := 8222
+	clientPort := 4222
+
+	// Parse seed routes (hub may have none if it's the initial seed)
+	var routes []*url.URL
+	if seedRoutes != "" {
+		routes = server.RoutesFromStr(seedRoutes)
 	}
 
-	// Start embedded NATS server
+	// Start embedded NATS server as cluster member
 	opts := &server.Options{
+		ServerName: hubRegion,
 		Host:       "0.0.0.0",
-		Port:       natsPort,
-		MaxPayload: 64 * 1024,
-		LeafNode: server.LeafNodeOpts{
+		Port:       clientPort,
+		HTTPPort:   monitorPort,
+		Cluster: server.ClusterOpts{
+			Name: "latency-mesh",
 			Host: "0.0.0.0",
-			Port: leafPort,
+			Port: clusterPort,
 		},
+		Routes: routes,
 		NoSigs: true,
 	}
 
@@ -66,63 +136,49 @@ func main() {
 		log.Fatalf("nats server: %v", err)
 	}
 	go ns.Start()
-	if !ns.ReadyForConnections(10 * time.Second) {
+	if !ns.ReadyForConnections(30 * time.Second) {
 		log.Fatal("nats server not ready")
 	}
-	hub.natsServer = ns
-	log.Printf("NATS server started: client=%d leaf=%d", natsPort, leafPort)
+	log.Printf("NATS cluster member started: client=%d cluster=%d monitor=%d", clientPort, clusterPort, monitorPort)
 
-	// Connect local NATS client
-	nc, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", natsPort),
-		nats.Name("hub-aggregator"),
-	)
+	// Prometheus API client (for PromQL queries)
+	promClient, err := promapi.NewClient(promapi.Config{Address: promURL})
 	if err != nil {
-		log.Fatalf("nats connect: %v", err)
+		log.Fatalf("prometheus client: %v", err)
 	}
-	hub.nc = nc
 
-	// Subscribe to latency results from all agents
-	nc.Subscribe("latency.results.>", func(msg *nats.Msg) {
-		var r latency.Result
-		if err := json.Unmarshal(msg.Data, &r); err != nil {
-			log.Printf("bad result: %v", err)
-			return
-		}
-		hub.matrix.Update(&r)
-		hub.broadcastToWS(&r)
-	})
+	hub := &Hub{
+		region:     hubRegion,
+		natsServer: ns,
+		promAPI:    promv1.NewAPI(promClient),
+		authToken:  authToken,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
 
-	// Subscribe to health reports
-	nc.Subscribe("latency.health.>", func(msg *nats.Msg) {
-		// Log health reports
-		parts := strings.Split(msg.Subject, ".")
-		if len(parts) >= 3 {
-			log.Printf("health: %s alive", parts[2])
-		}
-	})
+	// Start Prometheus metrics endpoint
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	go func() {
+		log.Printf("Metrics listening on %s", metricsAddr)
+		http.ListenAndServe(metricsAddr, metricsMux)
+	}()
 
-	// Schedule periodic sweeps
-	go hub.sweepScheduler()
+	// Start routez scraper
+	go hub.scrapeLoop()
 
-	// HTTP server
+	// HTTP API + frontend server
 	mux := http.NewServeMux()
-
-	// API routes
 	mux.HandleFunc("/api/v1/matrix", hub.handleMatrix)
 	mux.HandleFunc("/api/v1/pair/", hub.handlePair)
 	mux.HandleFunc("/api/v1/regions", hub.handleRegions)
 	mux.HandleFunc("/api/v1/nearest", hub.handleNearest)
 	mux.HandleFunc("/api/v1/az-pairs", hub.handleAZPairs)
 	mux.HandleFunc("/api/v1/health", hub.handleHealthAPI)
-	mux.HandleFunc("/api/v1/trigger-sweep", hub.handleTriggerSweep)
+	mux.HandleFunc("/api/v1/cluster", hub.handleCluster)
 	mux.HandleFunc("/ws/live", hub.handleWebSocket)
 	mux.HandleFunc("/ping", hub.handlePing)
 
-	// Static frontend files
-	staticFS, err := fs.Sub(staticFiles, "static")
-	if err != nil {
-		log.Fatalf("static fs: %v", err)
-	}
+	staticFS, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	httpServer := &http.Server{
@@ -131,7 +187,6 @@ func main() {
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}
-
 	go func() {
 		log.Printf("HTTP listening on %s", listenAddr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -148,57 +203,214 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	httpServer.Shutdown(ctx)
-	nc.Drain()
 	ns.Shutdown()
 }
 
-// sweepScheduler triggers a full measurement sweep every 15 minutes.
-func (h *Hub) sweepScheduler() {
-	// Initial sweep after 10 seconds (give agents time to connect)
-	time.Sleep(10 * time.Second)
-	h.triggerSweep()
+// ==========================================================================
+// Routez scraper — collects RTT from all NATS cluster members
+// ==========================================================================
 
-	ticker := time.NewTicker(15 * time.Minute)
+func (h *Hub) scrapeLoop() {
+	// Wait for cluster to form
+	time.Sleep(15 * time.Second)
+	h.scrapeAllNodes()
+
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		h.triggerSweep()
+		h.scrapeAllNodes()
 	}
 }
 
-func (h *Hub) triggerSweep() {
-	regionIDs := regions.IDs()
-	cmd, _ := json.Marshal(map[string]interface{}{
-		"regions": regionIDs,
-	})
-	if err := h.nc.Publish("latency.control.schedule", cmd); err != nil {
-		log.Printf("trigger sweep: %v", err)
-	} else {
-		log.Printf("triggered sweep for %d regions", len(regionIDs))
+func (h *Hub) scrapeAllNodes() {
+	// Step 1: Scrape our own monitoring endpoint to discover cluster members
+	selfRoutez, err := h.fetchRoutez(fmt.Sprintf("http://127.0.0.1:%d", 8222))
+	if err != nil {
+		log.Printf("scrape self: %v", err)
+		scrapeErrors.Inc()
+		return
 	}
+
+	// Record hub's own routes
+	routeCount.WithLabelValues(h.region).Set(float64(selfRoutez.NumRoutes))
+	for _, route := range selfRoutez.Routes {
+		if route.RemoteName == "" || route.RTT == "" {
+			continue
+		}
+		rttSec := parseRTT(route.RTT)
+		if rttSec > 0 {
+			routeRTT.WithLabelValues(h.region, route.RemoteName).Set(rttSec)
+		}
+	}
+
+	// Step 2: Scrape each cluster member's /routez for the full mesh
+	var wg sync.WaitGroup
+	for _, route := range selfRoutez.Routes {
+		if route.RemoteName == "" || route.IP == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(name, ip string) {
+			defer wg.Done()
+			memberRoutez, err := h.fetchRoutez(fmt.Sprintf("http://%s:%d", ip, 8222))
+			if err != nil {
+				scrapeErrors.Inc()
+				return
+			}
+			routeCount.WithLabelValues(name).Set(float64(memberRoutez.NumRoutes))
+			for _, mr := range memberRoutez.Routes {
+				if mr.RemoteName == "" || mr.RTT == "" {
+					continue
+				}
+				rttSec := parseRTT(mr.RTT)
+				if rttSec > 0 {
+					routeRTT.WithLabelValues(name, mr.RemoteName).Set(rttSec)
+				}
+			}
+		}(route.RemoteName, route.IP)
+	}
+	wg.Wait()
+
+	// Broadcast update to WebSocket clients
+	h.broadcastLatest()
 }
 
-// broadcastToWS sends a latency result to all connected WebSocket clients.
-func (h *Hub) broadcastToWS(r *latency.Result) {
-	h.wsClients.Range(func(key, value interface{}) bool {
-		conn := key.(*websocket.Conn)
-		ctx := value.(context.Context)
-		go func() {
-			wsjson.Write(ctx, conn, r)
-		}()
-		return true
+func (h *Hub) fetchRoutez(baseURL string) (*routezResponse, error) {
+	resp, err := h.httpClient.Get(baseURL + "/routez")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var rz routezResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rz); err != nil {
+		return nil, err
+	}
+	return &rz, nil
+}
+
+// parseRTT converts a NATS RTT string (e.g., "15.234ms") to seconds.
+func parseRTT(s string) float64 {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0
+	}
+	return d.Seconds()
+}
+
+// ==========================================================================
+// PromQL query helpers
+// ==========================================================================
+
+func (h *Hub) queryMatrix(ctx context.Context) ([]latency.Result, error) {
+	result, _, err := h.promAPI.Query(ctx, "nats_cluster_route_rtt_seconds * 1000", time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	vec, ok := result.(model.Vector)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type: %T", result)
+	}
+
+	var results []latency.Result
+	for _, sample := range vec {
+		source := string(sample.Metric["source"])
+		target := string(sample.Metric["target"])
+		if source == "" || target == "" {
+			continue
+		}
+		results = append(results, latency.Result{
+			Source:    source,
+			Target:    target,
+			RTTMs:     math.Round(float64(sample.Value)*100) / 100,
+			Timestamp: sample.Timestamp.Time(),
+		})
+	}
+	return results, nil
+}
+
+func (h *Hub) queryPairHistory(ctx context.Context, source, target string, duration time.Duration) ([]latency.Result, error) {
+	query := fmt.Sprintf(`nats_cluster_route_rtt_seconds{source="%s",target="%s"} * 1000`, source, target)
+	end := time.Now()
+	start := end.Add(-duration)
+
+	result, _, err := h.promAPI.QueryRange(ctx, query, promv1.Range{
+		Start: start,
+		End:   end,
+		Step:  30 * time.Second,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	matrix, ok := result.(model.Matrix)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type: %T", result)
+	}
+
+	var results []latency.Result
+	for _, stream := range matrix {
+		for _, sample := range stream.Values {
+			results = append(results, latency.Result{
+				Source:    source,
+				Target:    target,
+				RTTMs:     math.Round(float64(sample.Value)*100) / 100,
+				Timestamp: sample.Timestamp.Time(),
+			})
+		}
+	}
+	return results, nil
 }
 
+func (h *Hub) querySourceRow(ctx context.Context, source string) ([]latency.Result, error) {
+	query := fmt.Sprintf(`nats_cluster_route_rtt_seconds{source="%s"} * 1000`, source)
+	result, _, err := h.promAPI.Query(ctx, query, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	vec, ok := result.(model.Vector)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type: %T", result)
+	}
+
+	var results []latency.Result
+	for _, sample := range vec {
+		target := string(sample.Metric["target"])
+		if target == "" {
+			continue
+		}
+		results = append(results, latency.Result{
+			Source:    source,
+			Target:    target,
+			RTTMs:     math.Round(float64(sample.Value)*100) / 100,
+			Timestamp: sample.Timestamp.Time(),
+		})
+	}
+	return results, nil
+}
+
+// ==========================================================================
 // API handlers
+// ==========================================================================
 
 func (h *Hub) handleMatrix(w http.ResponseWriter, r *http.Request) {
 	from := r.URL.Query().Get("from")
-	var results []*latency.Result
+
+	var results []latency.Result
+	var err error
 	if from != "" {
-		results = h.matrix.GetRow(from)
+		results, err = h.querySourceRow(r.Context(), from)
 	} else {
-		results = h.matrix.GetAll()
+		results, err = h.queryMatrix(r.Context())
 	}
+	if err != nil {
+		log.Printf("matrix query: %v", err)
+		writeJSON(w, map[string]interface{}{"results": []interface{}{}, "count": 0, "error": err.Error()})
+		return
+	}
+
 	writeJSON(w, map[string]interface{}{
 		"results": results,
 		"count":   len(results),
@@ -207,7 +419,6 @@ func (h *Hub) handleMatrix(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) handlePair(w http.ResponseWriter, r *http.Request) {
-	// /api/v1/pair/{from}/{to}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/pair/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 {
@@ -216,8 +427,25 @@ func (h *Hub) handlePair(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parts[0], parts[1]
 
-	latest := h.matrix.Get(from, to)
-	history := h.matrix.GetHistory(from, to)
+	// Duration from query param, default 1h
+	dur := 1 * time.Hour
+	if d := r.URL.Query().Get("duration"); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil {
+			dur = parsed
+		}
+	}
+
+	history, err := h.queryPairHistory(r.Context(), from, to, dur)
+	if err != nil {
+		log.Printf("pair query: %v", err)
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	var latest *latency.Result
+	if len(history) > 0 {
+		latest = &history[len(history)-1]
+	}
 
 	writeJSON(w, map[string]interface{}{
 		"latest":  latest,
@@ -230,13 +458,10 @@ func (h *Hub) handleRegions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) handleNearest(w http.ResponseWriter, r *http.Request) {
-	// Use query param ip, or infer from request
-	ip := r.URL.Query().Get("ip")
 	lat := r.URL.Query().Get("lat")
 	lon := r.URL.Query().Get("lon")
 
 	if lat != "" && lon != "" {
-		// Direct lat/lon provided
 		var clat, clon float64
 		fmt.Sscanf(lat, "%f", &clat)
 		fmt.Sscanf(lon, "%f", &clon)
@@ -265,16 +490,7 @@ func (h *Hub) handleNearest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ip != "" {
-		// GeoIP lookup would go here — for now return error
-		writeJSON(w, map[string]interface{}{
-			"error": "GeoIP lookup not yet implemented, use lat/lon params",
-			"ip":    ip,
-		})
-		return
-	}
-
-	http.Error(w, "provide lat/lon or ip query params", http.StatusBadRequest)
+	http.Error(w, "provide lat/lon query params", http.StatusBadRequest)
 }
 
 func (h *Hub) handleAZPairs(w http.ResponseWriter, r *http.Request) {
@@ -284,12 +500,13 @@ func (h *Hub) handleAZPairs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	minDist := 200.0 // km
-	if d := r.URL.Query().Get("min_distance_km"); d != "" {
-		fmt.Sscanf(d, "%f", &minDist)
+	results, err := h.queryMatrix(r.Context())
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
+		return
 	}
 
-	pairs := latency.FindAZPairs(primary, h.matrix, minDist)
+	pairs := latency.FindAZPairs(primary, results)
 	writeJSON(w, map[string]interface{}{
 		"primary": primary,
 		"pairs":   pairs,
@@ -297,39 +514,61 @@ func (h *Hub) handleAZPairs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) handleHealthAPI(w http.ResponseWriter, r *http.Request) {
+	numRoutes := h.natsServer.NumRoutes()
 	writeJSON(w, map[string]interface{}{
-		"status":         "ok",
-		"nats_connected": h.nc.IsConnected(),
-		"pairs_measured": h.matrix.PairCount(),
-		"sources":        h.matrix.Sources(),
-		"ts":             time.Now().Unix(),
+		"status":     "ok",
+		"region":     h.region,
+		"num_routes": numRoutes,
+		"ts":         time.Now().Unix(),
 	})
 }
 
-func (h *Hub) handleTriggerSweep(w http.ResponseWriter, r *http.Request) {
-	if h.authToken != "" && r.URL.Query().Get("auth") != h.authToken {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+func (h *Hub) handleCluster(w http.ResponseWriter, r *http.Request) {
+	rz, err := h.fetchRoutez("http://127.0.0.1:8222")
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	h.triggerSweep()
-	writeJSON(w, map[string]interface{}{"status": "sweep triggered"})
+
+	type member struct {
+		Name      string `json:"name"`
+		IP        string `json:"ip"`
+		RTTMs     string `json:"rtt"`
+	}
+	var members []member
+	for _, route := range rz.Routes {
+		members = append(members, member{
+			Name:  route.RemoteName,
+			IP:    route.IP,
+			RTTMs: route.RTT,
+		})
+	}
+	writeJSON(w, map[string]interface{}{
+		"hub":     h.region,
+		"members": members,
+		"count":   len(members),
+	})
 }
 
 func (h *Hub) handlePing(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"region": "us-ord",
+		"region": h.region,
 		"role":   "hub",
 		"ts":     time.Now().UnixMilli(),
 	})
 }
+
+// ==========================================================================
+// WebSocket
+// ==========================================================================
 
 func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
 	})
 	if err != nil {
-		log.Printf("ws accept: %v", err)
 		return
 	}
 
@@ -341,14 +580,16 @@ func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
-	// Send current matrix snapshot on connect
-	snapshot := h.matrix.GetAll()
-	wsjson.Write(ctx, conn, map[string]interface{}{
-		"type":    "snapshot",
-		"results": snapshot,
-	})
+	// Send current data on connect
+	results, err := h.queryMatrix(ctx)
+	if err == nil {
+		wsjson.Write(ctx, conn, map[string]interface{}{
+			"type":    "snapshot",
+			"results": results,
+		})
+	}
 
-	// Keep alive — read loop (client can send commands later)
+	// Read loop (keep-alive)
 	for {
 		_, _, err := conn.Read(ctx)
 		if err != nil {
@@ -356,6 +597,30 @@ func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+func (h *Hub) broadcastLatest() {
+	ctx := context.Background()
+	results, err := h.queryMatrix(ctx)
+	if err != nil {
+		return
+	}
+
+	msg := map[string]interface{}{
+		"type":    "update",
+		"results": results,
+	}
+
+	h.wsClients.Range(func(key, value interface{}) bool {
+		conn := key.(*websocket.Conn)
+		wsCtx := value.(context.Context)
+		wsjson.Write(wsCtx, conn, msg)
+		return true
+	})
+}
+
+// ==========================================================================
+// Helpers
+// ==========================================================================
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

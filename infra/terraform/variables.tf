@@ -26,18 +26,6 @@ variable "hub_region" {
   default     = "us-ord"
 }
 
-variable "nats_user" {
-  description = "NATS auth user"
-  type        = string
-  default     = "probe"
-}
-
-variable "nats_pass" {
-  description = "NATS auth password"
-  type        = string
-  sensitive   = true
-}
-
 variable "auth_token" {
   description = "API auth token for protected endpoints"
   type        = string

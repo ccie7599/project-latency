@@ -49,14 +49,12 @@ locals {
     "za-jnb-1"      = { label = "probe-jnb" }
   }
 
-  # Use custom list or all regions
   agent_regions = var.agent_regions != null ? var.agent_regions : local.all_regions
-
-  common_tags = ["project:latency", "owner:brian"]
+  common_tags   = ["project:latency", "owner:brian"]
 }
 
 # ============================================================
-# Hub Server
+# Hub Server — NATS cluster seed + API + Prometheus
 # ============================================================
 resource "linode_instance" "hub" {
   label     = "latency-hub"
@@ -71,7 +69,6 @@ resource "linode_instance" "hub" {
   provisioner "file" {
     source      = var.hub_binary_path
     destination = "/usr/local/bin/latency-hub"
-
     connection {
       type        = "ssh"
       host        = self.ip_address
@@ -83,23 +80,58 @@ resource "linode_instance" "hub" {
   provisioner "remote-exec" {
     inline = [
       "chmod +x /usr/local/bin/latency-hub",
+
+      # Install Prometheus
+      "curl -sL https://github.com/prometheus/prometheus/releases/download/v2.53.0/prometheus-2.53.0.linux-amd64.tar.gz | tar xz -C /tmp",
+      "cp /tmp/prometheus-*/prometheus /usr/local/bin/",
+      "cp /tmp/prometheus-*/promtool /usr/local/bin/",
+      "mkdir -p /etc/prometheus /var/lib/prometheus",
+
+      # Prometheus config — scrape the hub's metrics endpoint
+      "cat > /etc/prometheus/prometheus.yml << 'PROMCFG'",
+      "global:",
+      "  scrape_interval: 10s",
+      "scrape_configs:",
+      "  - job_name: nats-latency",
+      "    static_configs:",
+      "      - targets: ['localhost:2112']",
+      "PROMCFG",
+
+      # Prometheus systemd unit
+      "cat > /etc/systemd/system/prometheus.service << 'UNIT'",
+      "[Unit]",
+      "Description=Prometheus",
+      "After=network.target",
+      "[Service]",
+      "Type=simple",
+      "ExecStart=/usr/local/bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/var/lib/prometheus --storage.tsdb.retention.time=15d --web.listen-address=:9090",
+      "Restart=always",
+      "RestartSec=5",
+      "[Install]",
+      "WantedBy=multi-user.target",
+      "UNIT",
+
+      # Hub systemd unit
       "cat > /etc/systemd/system/latency-hub.service << 'UNIT'",
       "[Unit]",
       "Description=Linode Latency Hub",
-      "After=network.target",
-      "",
+      "After=network.target prometheus.service",
       "[Service]",
       "Type=simple",
       "ExecStart=/usr/local/bin/latency-hub",
       "Restart=always",
       "RestartSec=5",
+      "Environment=REGION=${var.hub_region}",
       "Environment=LISTEN_ADDR=:443",
+      "Environment=METRICS_ADDR=:2112",
+      "Environment=PROMETHEUS_URL=http://localhost:9090",
       "Environment=AUTH_TOKEN=${var.auth_token}",
-      "",
       "[Install]",
       "WantedBy=multi-user.target",
       "UNIT",
+
       "systemctl daemon-reload",
+      "systemctl enable --now prometheus",
       "systemctl enable --now latency-hub",
     ]
 
@@ -135,11 +167,20 @@ resource "linode_firewall" "hub" {
   }
 
   inbound {
-    label    = "nats-leaf"
+    label    = "nats-cluster"
     action   = "ACCEPT"
     protocol = "TCP"
-    ports    = "7422"
-    ipv4     = ["0.0.0.0/0"]  # Agents connect from dynamic IPs
+    ports    = "6222"
+    ipv4     = ["0.0.0.0/0"]
+    ipv6     = ["::/0"]
+  }
+
+  inbound {
+    label    = "nats-monitor"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "8222"
+    ipv4     = ["0.0.0.0/0"]
     ipv6     = ["::/0"]
   }
 
@@ -158,19 +199,19 @@ resource "linode_firewall" "hub" {
 }
 
 # ============================================================
-# Agent Instances (one per region)
+# Agent Instances — NATS cluster members
 # ============================================================
 module "agent" {
   for_each = local.agent_regions
   source   = "./modules/agent"
 
-  region       = each.key
-  label        = each.value.label
-  nats_url     = "nats://${var.nats_user}:${var.nats_pass}@${linode_instance.hub.ip_address}:7422"
-  binary_path  = var.agent_binary_path
-  ssh_key      = var.ssh_public_key
-  admin_ip     = var.admin_ip
-  tags         = local.common_tags
+  region          = each.key
+  label           = each.value.label
+  nats_seed_routes = "nats-route://${linode_instance.hub.ip_address}:6222"
+  binary_path     = var.agent_binary_path
+  ssh_key         = var.ssh_public_key
+  admin_ip        = var.admin_ip
+  tags            = local.common_tags
 }
 
 # ============================================================

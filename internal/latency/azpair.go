@@ -6,16 +6,14 @@ import (
 	"github.com/bapley/project-latency/internal/regions"
 )
 
-// AZCategory classifies a region pair's suitability for different replication strategies.
 type AZCategory string
 
 const (
-	AZSyncCapable AZCategory = "sync-capable"  // <10ms RTT, viable for synchronous replication
-	AZAsyncLowRPO AZCategory = "async-low-rpo" // 10-50ms RTT, low RPO async replication
-	AZDROnly      AZCategory = "dr-only"       // >50ms RTT, disaster recovery only
+	AZSyncCapable AZCategory = "sync-capable"  // <10ms RTT
+	AZAsyncLowRPO AZCategory = "async-low-rpo" // 10-50ms RTT
+	AZDROnly      AZCategory = "dr-only"       // >50ms RTT
 )
 
-// AZPair represents a recommended availability zone pair.
 type AZPair struct {
 	Primary     string     `json:"primary"`
 	Secondary   string     `json:"secondary"`
@@ -23,11 +21,10 @@ type AZPair struct {
 	DistanceKm  float64    `json:"distance_km"`
 	Category    AZCategory `json:"category"`
 	SameCountry bool       `json:"same_country"`
-	CoLocated   bool       `json:"co_located"` // same city, not suitable as AZ pair
+	CoLocated   bool       `json:"co_located"`
 	Rationale   string     `json:"rationale"`
 }
 
-// ClassifyAZPair determines the AZ category for a given latency and distance.
 func ClassifyAZPair(rttMs, distanceKm float64, sameCountry bool) (AZCategory, string) {
 	switch {
 	case rttMs < 10:
@@ -45,45 +42,39 @@ func ClassifyAZPair(rttMs, distanceKm float64, sameCountry bool) (AZCategory, st
 	}
 }
 
-// FindAZPairs returns recommended AZ pairs for a given primary region, sorted by RTT.
-func FindAZPairs(primary string, matrix *Matrix, minDistanceKm float64) []AZPair {
+// FindAZPairs computes AZ pair recommendations from a flat slice of results.
+// The results slice should contain RTT measurements where source == primary.
+func FindAZPairs(primary string, results []Result) []AZPair {
 	regionMap := regions.ByID()
 	prim, ok := regionMap[primary]
 	if !ok {
 		return nil
 	}
 
+	// Build RTT lookup from results
+	rttByTarget := make(map[string]float64)
+	for _, r := range results {
+		if r.Source == primary {
+			rttByTarget[r.Target] = r.RTTMs
+		}
+	}
+
 	var pairs []AZPair
-	for _, r := range regions.All {
-		if r.ID == primary {
+	for target, rttMs := range rttByTarget {
+		tgt, ok := regionMap[target]
+		if !ok {
 			continue
 		}
 
-		dist := regions.HaversineKm(prim.Lat, prim.Lon, r.Lat, r.Lon)
-		sameCountry := prim.Country == r.Country
+		dist := regions.HaversineKm(prim.Lat, prim.Lon, tgt.Lat, tgt.Lon)
+		sameCountry := prim.Country == tgt.Country
 		coLocated := dist < 50
-
-		// Get bidirectional latency, average if both exist
-		rttMs := 0.0
-		count := 0
-		if fwd := matrix.Get(primary, r.ID); fwd != nil {
-			rttMs += fwd.P50Ms
-			count++
-		}
-		if rev := matrix.Get(r.ID, primary); rev != nil {
-			rttMs += rev.P50Ms
-			count++
-		}
-		if count == 0 {
-			continue // no measurement data
-		}
-		rttMs /= float64(count)
 
 		cat, rationale := ClassifyAZPair(rttMs, dist, sameCountry)
 
 		pairs = append(pairs, AZPair{
 			Primary:     primary,
-			Secondary:   r.ID,
+			Secondary:   target,
 			RTTMs:       rttMs,
 			DistanceKm:  dist,
 			Category:    cat,
