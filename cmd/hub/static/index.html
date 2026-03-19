@@ -955,15 +955,13 @@ function drawArcs() {
     }
 
     // Deduplicate: only keep one direction per pair
-    if (!selectedRegion) {
-        const seen = new Set();
-        data = data.filter(r => {
-            const key = [r.source, r.target].sort().join(':');
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
-    }
+    const seen = new Set();
+    data = data.filter(r => {
+        const key = [r.source, r.target].sort().join(':');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 
     const arcs = d3.select('#arcs-layer')
         .selectAll('.latency-arc')
