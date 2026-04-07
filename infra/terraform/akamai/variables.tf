@@ -11,7 +11,7 @@ variable "group_id" {
 variable "origin_hostname" {
   description = "Origin server hostname (hub)"
   type        = string
-  default     = "latency-origin.presales.connected-cloud.io"
+  default     = "latency-origin.connected-cloud.io"
 }
 
 variable "property_hostname" {
