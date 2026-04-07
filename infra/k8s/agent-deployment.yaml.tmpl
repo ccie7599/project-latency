@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: latency-demo
+  labels:
+    demo: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: latency-tls
+  namespace: latency-demo
+type: kubernetes.io/tls
+data:
+  tls.crt: __TLS_CRT_B64__
+  tls.key: __TLS_KEY_B64__
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: latency-agent
+  namespace: latency-demo
+  labels:
+    app: latency-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: latency-agent
+  template:
+    metadata:
+      labels:
+        app: latency-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8222"
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: agent
+          image: brianapley/latency-agent:latest
+          ports:
+            - containerPort: 443
+              hostPort: 443
+              protocol: TCP
+            - containerPort: 4222
+              hostPort: 4222
+              protocol: TCP
+            - containerPort: 6222
+              hostPort: 6222
+              protocol: TCP
+            - containerPort: 8222
+              hostPort: 8222
+              protocol: TCP
+          env:
+            - name: REGION
+              value: "__REGION__"
+            - name: NATS_SEED_ROUTES
+              value: "nats-route://__HUB_IP__:6222"
+            - name: LISTEN_ADDR
+              value: ":443"
+            - name: TLS_CERT
+              value: "/etc/latency/tls.crt"
+            - name: TLS_KEY
+              value: "/etc/latency/tls.key"
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/latency
+              readOnly: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: tls
+          secret:
+            secretName: latency-tls

@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: latency-hub
+  namespace: latency-demo
+  labels:
+    app: latency-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: latency-hub
+  template:
+    metadata:
+      labels:
+        app: latency-hub
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "2112"
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: hub
+          image: brianapley/latency-hub:latest
+          ports:
+            - containerPort: 443
+              hostPort: 443
+              protocol: TCP
+            - containerPort: 4222
+              hostPort: 4222
+              protocol: TCP
+            - containerPort: 6222
+              hostPort: 6222
+              protocol: TCP
+            - containerPort: 8222
+              hostPort: 8222
+              protocol: TCP
+            - containerPort: 2112
+              protocol: TCP
+          env:
+            - name: REGION
+              value: "us-ord"
+            - name: LISTEN_ADDR
+              value: ":443"
+            - name: TLS_CERT
+              value: "/etc/latency/tls.crt"
+            - name: TLS_KEY
+              value: "/etc/latency/tls.key"
+            - name: METRICS_ADDR
+              value: ":2112"
+            - name: PROMETHEUS_URL
+              value: "http://prometheus.central-services.svc.cluster.local:9090"
+            - name: AUTH_TOKEN
+              value: "f77702e5b9277f608abd30707239e1f9"
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/latency
+              readOnly: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: tls
+          secret:
+            secretName: latency-tls

@@ -31,3 +31,12 @@ infra/terraform/tfplan
 infra/terraform/akamai/.terraform/
 infra/terraform/akamai/*.tfstate*
 infra/terraform/akamai/.terraform.lock.hcl
+infra/terraform/lke-agents/.terraform/
+infra/terraform/lke-agents/*.tfstate*
+infra/terraform/lke-agents/.terraform.lock.hcl
+infra/terraform/lke-agents/terraform.tfvars
+infra/terraform/vm-agents/.terraform/
+infra/terraform/vm-agents/*.tfstate*
+infra/terraform/vm-agents/.terraform.lock.hcl
+infra/terraform/vm-agents/terraform.tfvars
+/tmp/latency-kubeconfigs/
