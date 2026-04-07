@@ -40,11 +40,11 @@ locals {
 
   # Core regions restricted for LKE — deploy as VMs instead
   restricted_core_regions = {
-    "fr-par"   = { label = "probe-par",  short = "par" }
-    "us-iad"   = { label = "probe-iad",  short = "iad" }
-    "eu-west"  = { label = "probe-lon",  short = "lon" }
-    "es-mad"   = { label = "probe-mad",  short = "mad" }
-    "au-mel"   = { label = "probe-mel",  short = "mel" }
+    # "fr-par" excluded — region restricted in presales account
+    # "us-iad" excluded — region restricted in presales account
+    # "eu-west" excluded — region restricted in presales account
+    # "es-mad" excluded — region restricted in presales account
+    # "au-mel" excluded — region restricted in presales account
   }
 
   all_vm_regions = merge(local.distributed_regions, local.restricted_core_regions)
