@@ -2,7 +2,7 @@
 
 Built a real-time latency visualization tool that shows measured RTT between all 45 Linode compute regions worldwide. Deploys a lightweight probe in every region — core and distributed edge sites — forming a full mesh that continuously measures direct region-to-region latency. Data feeds into Prometheus and renders on a retro-styled network map.
 
-**Link**: [https://latency-demo.connected-cloud.io/?auth=f77702e5b9277f608abd30707239e1f9](https://latency-demo.connected-cloud.io/?auth=f77702e5b9277f608abd30707239e1f9)
+**Link**: https://latency-demo.connected-cloud.io (token shared separately)
 
 What you can do:
 - **Filter by continent/country** or select individual regions — arcs show measured RTT with ms labels

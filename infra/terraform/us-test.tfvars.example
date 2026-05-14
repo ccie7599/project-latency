@@ -4,7 +4,7 @@
 
 linode_token   = ""
 ssh_public_key = ""
-admin_ip       = "47.224.104.170/32"
+admin_ip       = "1.2.3.4/32"  # your home/office IP
 auth_token     = ""
 hub_region     = "us-ord"
 domain         = "connected-cloud.io"

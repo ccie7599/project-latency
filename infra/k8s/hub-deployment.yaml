@@ -52,7 +52,10 @@ spec:
             - name: PROMETHEUS_URL
               value: "http://prometheus.central-services.svc.cluster.local:9090"
             - name: AUTH_TOKEN
-              value: "f77702e5b9277f608abd30707239e1f9"
+              valueFrom:
+                secretKeyRef:
+                  name: latency-auth
+                  key: token
           volumeMounts:
             - name: tls
               mountPath: /etc/latency

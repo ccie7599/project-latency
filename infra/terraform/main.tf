@@ -190,7 +190,7 @@ resource "linode_firewall" "hub" {
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "8222"
-    ipv4     = ["172.234.206.146/32"]
+    ipv4     = [var.dev_host_ip]
   }
 
   inbound {
@@ -198,7 +198,7 @@ resource "linode_firewall" "hub" {
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "22"
-    ipv4     = [var.admin_ip, "172.234.206.146/32"]
+    ipv4     = [var.admin_ip, var.dev_host_ip]
   }
 
   inbound_policy  = "DROP"
@@ -240,7 +240,7 @@ resource "linode_firewall" "agents" {
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "22"
-    ipv4     = [var.admin_ip, "172.234.206.146/32"]
+    ipv4     = [var.admin_ip, var.dev_host_ip]
   }
 
   inbound_policy  = "DROP"

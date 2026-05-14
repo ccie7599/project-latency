@@ -4,8 +4,8 @@ variable "linode_token" {
 }
 
 variable "ssh_public_key" {
-  type    = string
-  default = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGU4AsrsDExKPBBZGWywY+2BsUw12lkHfEwf/bY03BAp brian@apley.net"
+  description = "SSH public key for instance access (set via terraform.tfvars)"
+  type        = string
 }
 
 variable "hub_ip" {
@@ -13,8 +13,8 @@ variable "hub_ip" {
 }
 
 variable "admin_ips" {
-  type    = list(string)
-  default = ["47.224.104.170/32", "172.234.206.146/32"]
+  description = "Admin IPs for SSH/HTTPS direct access (set via terraform.tfvars)"
+  type        = list(string)
 }
 
 variable "agent_binary_path" {

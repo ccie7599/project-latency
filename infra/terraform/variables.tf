@@ -14,6 +14,11 @@ variable "admin_ip" {
   type        = string
 }
 
+variable "dev_host_ip" {
+  description = "Dev/automation host IP (CIDR) for SSH and management access"
+  type        = string
+}
+
 variable "domain" {
   description = "Domain for DNS records"
   type        = string

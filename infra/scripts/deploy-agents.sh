@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: ./deploy-agents.sh
 
 LINODE_TOKEN=$(cat ~/project-landing-zone/presales-landing-zone/.linode-token | grep -v '^#' | tr -d '\n')
-HUB_IP="172.238.169.30"
+HUB_IP="${HUB_IP:?HUB_IP env var required}"
 CERT_DIR="$HOME/.acme.sh/*.connected-cloud.io_ecc"
 TEMPLATE="/home/bapley/project-latency/infra/k8s/agent-deployment.yaml.tmpl"
 KUBECONFIG_DIR="/tmp/latency-kubeconfigs"

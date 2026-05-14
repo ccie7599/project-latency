@@ -9,8 +9,8 @@ variable "k8s_version" {
 }
 
 variable "admin_ips" {
-  type    = list(string)
-  default = ["47.224.104.170/32", "172.234.206.146/32"]
+  description = "Admin IPs for SSH/HTTPS direct access (set via terraform.tfvars)"
+  type        = list(string)
 }
 
 variable "hub_ip" {
