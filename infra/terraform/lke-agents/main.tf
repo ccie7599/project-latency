@@ -63,15 +63,19 @@ resource "linode_firewall" "agents" {
   label = "latency-agents-fw"
   tags  = local.common_tags
 
-  # NATS cluster mesh — open to all (agents discover each other dynamically)
-  # Will lock down to cluster IPs after all agents are deployed
+  # NATS cluster mesh — IPs managed out-of-band by infra/scripts/lock-nats-fw.sh
+  # which scans both accounts for cluster member IPs and updates all 4 FWs.
+  # ignore_changes prevents terraform from reverting that lockdown.
   inbound {
     label    = "nats-cluster"
     action   = "ACCEPT"
     protocol = "TCP"
     ports    = "6222"
     ipv4     = ["0.0.0.0/0"]
-    ipv6     = ["::/0"]
+  }
+
+  lifecycle {
+    ignore_changes = [inbound]
   }
 
   # NATS monitoring — hub + admin only
