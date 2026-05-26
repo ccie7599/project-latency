@@ -43,7 +43,7 @@ locals {
     # "fr-par" excluded — region restricted in presales account
     # "us-iad" excluded — region restricted in presales account
     # "eu-west" excluded — region restricted in presales account
-    # "es-mad" excluded — region restricted in presales account
+    "es-mad"   = { label = "probe-mad",  short = "mad" }
     # "au-mel" excluded — region restricted in presales account
   }
 
