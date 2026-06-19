@@ -1,0 +1,184 @@
+# seed-reconciler: keeps latency-seed.connected-cloud.io pointed at whichever
+# node currently runs the latency-hub pod.
+#
+# Why this exists:
+#   LKE upgrades replace nodes. When the hub pod is rescheduled to a new node,
+#   its hostNetwork IP changes. The agents' NATS_SEED_ROUTES (hardcoded IP)
+#   then point at a dead address and the mesh fragments. This was the 2026-06-18
+#   failure mode documented in
+#   ~/project-landing-zone/presales-landing-zone/docs/rca-2026-06-18-lke-upgrade.md
+#   ("Stable seed routes for latency-demo NATS mesh").
+#
+# What this does (every 60s):
+#   1. Find the node running the latency-hub pod.
+#   2. Read that node's ExternalIP.
+#   3. If different from current Akamai DNS A record for
+#      latency-seed.connected-cloud.io, update it.
+#   4. (Agents seed via this hostname, so they auto-recover on DNS TTL.)
+#
+# Reuses the existing cert-manager/akamai-edgegrid secret. Reads it via a
+# bound role rather than copying secrets across namespaces.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seed-reconciler
+  namespace: latency-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: seed-reconciler
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: seed-reconciler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: seed-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: seed-reconciler
+    namespace: latency-demo
+---
+# Read-only role on the existing akamai-edgegrid secret in cert-manager ns
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: seed-reconciler-edgegrid-reader
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["akamai-edgegrid"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: seed-reconciler-edgegrid-reader
+  namespace: cert-manager
+subjects:
+  - kind: ServiceAccount
+    name: seed-reconciler
+    namespace: latency-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: seed-reconciler-edgegrid-reader
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seed-reconciler
+  namespace: latency-demo
+data:
+  reconcile.sh: |
+    #!/bin/sh
+    set -e
+    ZONE="connected-cloud.io"
+    # All DNS records that should track the hub's node IP
+    FQDNS="latency-seed.connected-cloud.io latency-origin.connected-cloud.io latency.connected-cloud.io ord.latency.connected-cloud.io"
+
+    # Find hub pod's node
+    NODE=$(kubectl -n latency-demo get pod -l app=latency-hub \
+      -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null)
+    if [ -z "$NODE" ]; then
+      echo "[seed-reconciler] no latency-hub pod found"
+      exit 0
+    fi
+
+    # Get its external IP
+    NEW_IP=$(kubectl get node "$NODE" \
+      -o jsonpath='{.status.addresses[?(@.type=="ExternalIP")].address}' \
+      | awk '{print $1}')
+    if [ -z "$NEW_IP" ]; then
+      echo "[seed-reconciler] no ExternalIP on $NODE"
+      exit 0
+    fi
+
+    # Read Akamai EdgeGrid creds from the cert-manager secret
+    CLIENT_SECRET=$(kubectl -n cert-manager get secret akamai-edgegrid \
+      -o jsonpath='{.data.clientSecret}' | base64 -d)
+    ACCESS_TOKEN=$(kubectl -n cert-manager get secret akamai-edgegrid \
+      -o jsonpath='{.data.accessToken}' | base64 -d)
+    CLIENT_TOKEN=$(kubectl -n cert-manager get secret akamai-edgegrid \
+      -o jsonpath='{.data.clientToken}' | base64 -d)
+    HOST="akab-aahkhtimyx64pclx-xpwvh4fewuxskkzm.luna.akamaiapis.net"
+
+    NEW_IP="${NEW_IP}" CLIENT_SECRET="${CLIENT_SECRET}" ACCESS_TOKEN="${ACCESS_TOKEN}" CLIENT_TOKEN="${CLIENT_TOKEN}" HOST="${HOST}" ZONE="${ZONE}" FQDNS="${FQDNS}" python3 << 'PYEOF'
+    import os, sys, requests
+    from akamai.edgegrid import EdgeGridAuth
+
+    s = requests.Session()
+    s.auth = EdgeGridAuth(
+        client_token=os.environ["CLIENT_TOKEN"],
+        client_secret=os.environ["CLIENT_SECRET"],
+        access_token=os.environ["ACCESS_TOKEN"],
+    )
+    base = f"https://{os.environ['HOST']}"
+    zone = os.environ["ZONE"]
+    new_ip = os.environ["NEW_IP"]
+
+    for fqdn in os.environ["FQDNS"].split():
+        r = s.get(f"{base}/config-dns/v2/zones/{zone}/names/{fqdn}/types/A")
+        if r.status_code == 200:
+            current = r.json().get("rdata", [])
+            if current == [new_ip]:
+                print(f"[seed-reconciler] {fqdn} already -> {new_ip}")
+                continue
+            payload = {"name": fqdn, "type": "A", "ttl": 60, "rdata": [new_ip]}
+            r2 = s.put(f"{base}/config-dns/v2/zones/{zone}/names/{fqdn}/types/A",
+                       json=payload, headers={"Content-Type": "application/json"})
+            print(f"[seed-reconciler] UPD {fqdn} {current} -> {new_ip} ({r2.status_code})")
+        elif r.status_code == 404:
+            payload = {"name": fqdn, "type": "A", "ttl": 60, "rdata": [new_ip]}
+            r2 = s.post(f"{base}/config-dns/v2/zones/{zone}/names/{fqdn}/types/A",
+                        json=payload, headers={"Content-Type": "application/json"})
+            print(f"[seed-reconciler] NEW {fqdn} -> {new_ip} ({r2.status_code})")
+        else:
+            print(f"[seed-reconciler] ERR GET {fqdn}: {r.status_code} {r.text[:200]}")
+    PYEOF
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seed-reconciler
+  namespace: latency-demo
+spec:
+  schedule: "* * * * *"          # every 60s
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: seed-reconciler
+          restartPolicy: OnFailure
+          containers:
+            - name: reconciler
+              image: alpine/k8s:1.33.13
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  apk add --no-cache --quiet python3 py3-pip py3-requests > /dev/null 2>&1
+                  pip install --quiet --break-system-packages edgegrid-python > /dev/null 2>&1
+                  exec sh /scripts/reconcile.sh
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+              resources:
+                requests: { cpu: 10m, memory: 64Mi }
+                limits:   { cpu: 100m, memory: 128Mi }
+          volumes:
+            - name: scripts
+              configMap:
+                name: seed-reconciler
+                defaultMode: 0755
