@@ -35,6 +35,31 @@ rules:
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: seed-reconciler-secrets
+  namespace: latency-demo
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["linode-api"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: seed-reconciler-secrets
+  namespace: latency-demo
+subjects:
+  - kind: ServiceAccount
+    name: seed-reconciler
+    namespace: latency-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: seed-reconciler-secrets
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: seed-reconciler
@@ -85,6 +110,9 @@ data:
     ZONE="connected-cloud.io"
     # All DNS records that should track the hub's node IP
     FQDNS="latency-seed.connected-cloud.io latency-origin.connected-cloud.io latency.connected-cloud.io ord.latency.connected-cloud.io"
+    # Agent firewalls — hub IP needs to be allowed on 8222 (routez scrape) + 443 (ping checks)
+    # Presales: 4093969 lke-agents-fw, 4094050 vm-agents-fw
+    AGENT_FW_IDS="4093969 4094050"
 
     # Find hub pod's node
     NODE=$(kubectl -n latency-demo get pod -l app=latency-hub \
@@ -112,10 +140,18 @@ data:
       -o jsonpath='{.data.clientToken}' | base64 -d)
     HOST="akab-aahkhtimyx64pclx-xpwvh4fewuxskkzm.luna.akamaiapis.net"
 
-    NEW_IP="${NEW_IP}" CLIENT_SECRET="${CLIENT_SECRET}" ACCESS_TOKEN="${ACCESS_TOKEN}" CLIENT_TOKEN="${CLIENT_TOKEN}" HOST="${HOST}" ZONE="${ZONE}" FQDNS="${FQDNS}" python3 << 'PYEOF'
+    # Linode API token (presales account) for firewall updates
+    LINODE_TOKEN=$(kubectl -n latency-demo get secret linode-api \
+      -o jsonpath='{.data.token}' | base64 -d)
+
+    NEW_IP="${NEW_IP}" CLIENT_SECRET="${CLIENT_SECRET}" ACCESS_TOKEN="${ACCESS_TOKEN}" CLIENT_TOKEN="${CLIENT_TOKEN}" HOST="${HOST}" ZONE="${ZONE}" FQDNS="${FQDNS}" LINODE_TOKEN="${LINODE_TOKEN}" AGENT_FW_IDS="${AGENT_FW_IDS}" python3 << 'PYEOF'
     import os, sys, requests
     from akamai.edgegrid import EdgeGridAuth
 
+    new_ip = os.environ["NEW_IP"]
+    new_cidr = f"{new_ip}/32"
+
+    # 1) DNS reconcile — Akamai EdgeDNS
     s = requests.Session()
     s.auth = EdgeGridAuth(
         client_token=os.environ["CLIENT_TOKEN"],
@@ -124,26 +160,53 @@ data:
     )
     base = f"https://{os.environ['HOST']}"
     zone = os.environ["ZONE"]
-    new_ip = os.environ["NEW_IP"]
 
     for fqdn in os.environ["FQDNS"].split():
         r = s.get(f"{base}/config-dns/v2/zones/{zone}/names/{fqdn}/types/A")
         if r.status_code == 200:
             current = r.json().get("rdata", [])
             if current == [new_ip]:
-                print(f"[seed-reconciler] {fqdn} already -> {new_ip}")
+                print(f"[seed-reconciler] dns {fqdn} already -> {new_ip}")
                 continue
             payload = {"name": fqdn, "type": "A", "ttl": 60, "rdata": [new_ip]}
             r2 = s.put(f"{base}/config-dns/v2/zones/{zone}/names/{fqdn}/types/A",
                        json=payload, headers={"Content-Type": "application/json"})
-            print(f"[seed-reconciler] UPD {fqdn} {current} -> {new_ip} ({r2.status_code})")
+            print(f"[seed-reconciler] dns UPD {fqdn} {current} -> {new_ip} ({r2.status_code})")
         elif r.status_code == 404:
             payload = {"name": fqdn, "type": "A", "ttl": 60, "rdata": [new_ip]}
             r2 = s.post(f"{base}/config-dns/v2/zones/{zone}/names/{fqdn}/types/A",
                         json=payload, headers={"Content-Type": "application/json"})
-            print(f"[seed-reconciler] NEW {fqdn} -> {new_ip} ({r2.status_code})")
+            print(f"[seed-reconciler] dns NEW {fqdn} -> {new_ip} ({r2.status_code})")
         else:
-            print(f"[seed-reconciler] ERR GET {fqdn}: {r.status_code} {r.text[:200]}")
+            print(f"[seed-reconciler] dns ERR GET {fqdn}: {r.status_code} {r.text[:200]}")
+
+    # 2) Firewall reconcile — Linode API
+    # Ensure the current hub IP is in every agent FW's 8222 and 443 rules.
+    # Strip stale hub IPs (any /32 in connected to NATS-style ports that isn't
+    # currently present in the cluster — handled by lock-nats-fw.sh nightly).
+    # Here we just ensure the *current* hub IP is in.
+    lh = {"Authorization": f"Bearer {os.environ['LINODE_TOKEN']}",
+          "Content-Type": "application/json"}
+
+    for fw_id in os.environ["AGENT_FW_IDS"].split():
+        r = requests.get(f"https://api.linode.com/v4/networking/firewalls/{fw_id}/rules", headers=lh)
+        if r.status_code != 200:
+            print(f"[seed-reconciler] fw {fw_id} GET failed: {r.status_code}")
+            continue
+        rules = r.json()
+        changed = False
+        for rule in rules.get("inbound", []):
+            if str(rule.get("ports", "")) in ("8222", "443"):
+                ipv4 = rule.get("addresses", {}).get("ipv4", [])
+                if new_cidr not in ipv4:
+                    ipv4.append(new_cidr)
+                    rule["addresses"]["ipv4"] = ipv4
+                    changed = True
+        if changed:
+            r2 = requests.put(f"https://api.linode.com/v4/networking/firewalls/{fw_id}/rules", headers=lh, json=rules)
+            print(f"[seed-reconciler] fw {fw_id} +{new_cidr} on 8222/443 ({r2.status_code})")
+        else:
+            print(f"[seed-reconciler] fw {fw_id} already has {new_cidr}")
     PYEOF
 ---
 apiVersion: batch/v1
